@@ -1,0 +1,11 @@
+numpy
+matplotlib
+pandas
+scikit-learn
+torch
+ultralytics 
+opencv-python
+filterpy
+pygame
+pyttsx3
+screeninfo
