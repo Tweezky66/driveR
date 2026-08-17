@@ -2,6 +2,7 @@ import cv2
 import numpy as np 
 import pygame
 from screeninfo import get_monitors
+from visualization.icon_map import ICON_PATH, ICON_SIZE, EGO_CAR_SIZE
 
 DEFAULT_RESOLUTION = (480, 800)
 
@@ -34,6 +35,25 @@ class HUD:
         self.font = pygame.font.SysFont("segoeui", 24)
         self.pixels_per_meter = 20 # hardcoded value, need to change in future
 
+
+        self.icons = {}
+
+        for class_id, path in ICON_PATH.items():
+            if path is not None:
+                try:
+                    surf = pygame.image.load(path).convert_alpha()
+                    self.icons[class_id] = pygame.transform.scale(surf, ICON_SIZE)
+                except Exception as e:
+                    print(f"Could not load the image on {class_id}, {path}: {e}")
+
+        try:
+            ego_car = pygame.image.load("assets/icons/car_backward.png").convert_alpha()
+            self.ego_car_img = pygame.transform.scale(ego_car, EGO_CAR_SIZE)
+        except Exception as e:
+            print(f"Cound not load the proper image on ego car on {e}")
+
+
+
     def draw_3d_grid(self):
         center_x = self.width * 0.5
         horizon_y = int(self.height * 0.3)
@@ -54,20 +74,30 @@ class HUD:
     def render(self, detections, speed_kmh=0):
         self.screen.fill(self.colors["background"])
         self.draw_3d_grid()
-        pygame.draw.rect(
-            self.screen, 
-            self.colors["your car"],
-            (self.width // 2 - 20, self.height - 100, 40, 80), 
-            border_radius=10,
-        )
+
+        ego_x = (self.width // 2) - (EGO_CAR_SIZE[0] // 2)
+        ego_y = self.height - 100 - (EGO_CAR_SIZE[1] // 2)
+        self.screen.blit(self.ego_car_img, (ego_x, ego_y))
 
         for det in detections:
             x_lat, z_fwd = self.bev.to_bev(det["bbox"])
             if z_fwd <= 0:         
                 continue
             sx, sy = self.world_to_screen(x_lat, z_fwd)
-            color = self.colors["warning"] if z_fwd < 15 else self.colors["detected car"]
-            pygame.draw.circle(self.screen, color, (sx, sy), 8)
+
+            if not (0 <= sx <= self.width and 0 <= sy <= self.height):
+                continue # off screen, skip
+
+            icon = self.icons.get(det["class_id"])
+            if icon is not None:
+                rect = icon.get_rect(center=(sx, sy))
+                self.screen.blit(icon, rect)
+
+                if z_fwd < 15: 
+                    pygame.draw.circle(self.screen, self.colors["warning"], (sx, sy), 4)
+            else:
+                color = self.colors["warning"] if z_fwd < 15 else self.colors["detected car"]
+                pygame.draw.circle(self.screen, color, (sx, sy), 8)
 
         speed_surface = self.font.render(f"Speed {speed_kmh}", True, (255, 255, 255))
         self.screen.blit(speed_surface, (20, 20))

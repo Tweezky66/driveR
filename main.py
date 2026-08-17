@@ -1,10 +1,14 @@
 import cv2
+import os
+import numpy as np
  
 from perception.Detector import Detector, DEFAULT_CLASSES
 from perception.BEVTransform import BEVTransform, estimate_placeholder_homography
 from visualization.HUD import HUD
 
 TEST_VIDEO_PATH = "Datasets/test.mov"
+HOMOGRAPHY_PATH = "homography.npy"
+
 
 def main():
     detector = Detector()
@@ -30,7 +34,18 @@ def main():
         "Fix in future"
     )
 
-    H = estimate_placeholder_homography(frame_w, frame_h)
+    if os.path.exists(HOMOGRAPHY_PATH):
+        H = np.load(HOMOGRAPHY_PATH)
+        print(f"Loaded calibrated homography from {HOMOGRAPHY_PATH}")
+    else:
+        print(
+            f"No {HOMOGRAPHY_PATH} found - using an uncalibrated PLACEHOLDER "
+            "homography. Distances are rough guesses. Run "
+            "'python calibration_tool.py <calibration_frame.jpg>' once, using "
+            "a frame from this exact camera mounting, to get a real one."
+        )
+
+        H = estimate_placeholder_homography(frame_w, frame_h)
 
     bev = BEVTransform(H)
     hud = HUD(bev)
