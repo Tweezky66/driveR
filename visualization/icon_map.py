@@ -1,13 +1,19 @@
-ICON_PATH = {
-    0: None, # didnt find right one for now
-    2: "assets/icons/car_facing.png",
-    3: None, # the same with person
-    5: "assets/icons/bus_facing.png",
-    7: "assets/icons/truck_backward.png",
-    9: "assets/icons/traffic_light.png",
-    11: "assets/icons/stop_sign.png",
-
+from pathlib import Path
+ 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ICONS_DIR = PROJECT_ROOT / "assets" / "icons"
+ 
+ICON_PATHS = {
+    0: ICONS_DIR / "person_top_down.png",
+    2: ICONS_DIR / "car_facing.png",
+    3: ICONS_DIR / "motorcycle_top_down.png",
+    5: ICONS_DIR / "bus_facing.png", 
+    7: ICONS_DIR / "truck_facing.png",  
 }
+ 
 
-ICON_SIZE = (50, 60) #soon will make a dict to truck be bigger than cars 
-EGO_CAR_SIZE = (180, 180)
+ICON_SIZE = (28, 44)
+ 
+
+EGO_CAR_ICON_PATH = ICONS_DIR / "car_backward.png"
+EGO_CAR_ICON_SIZE = (180, 180)
