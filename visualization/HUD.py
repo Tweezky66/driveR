@@ -1,7 +1,18 @@
 import pygame
 from screeninfo import get_monitors
 
-from visualization.icon_map import ICON_PATHS, ICON_SIZE, EGO_CAR_ICON_PATH, EGO_CAR_ICON_SIZE
+from visualization.icon_map import ICON_PATHS, ICON_SIZE, EGO_CAR_ICON_PATH, EGO_CAR_ICON_SIZE, DEFAULT_ICON_SIZE
+
+
+
+def tint_surface(surface, color_rgb):
+    tinted = surface.copy()
+
+    tint = pygame.Surface(tinted.get_size(), pygame.SRCALPHA)
+    tint.fill((*color_rgb, 255))
+    tinted.blit(tint, (0,0), special_flags=pygame.BLEND_RGBA_MULT)
+    return tinted
+
 
 
 class HUD:
@@ -36,6 +47,7 @@ class HUD:
         for class_id, path in ICON_PATHS.items():
             try:
                 surf = pygame.image.load(path).convert_alpha()
+                base_size = ICON_SIZE.get(class_id, DEFAULT_ICON_SIZE)
                 self.icons[class_id] = pygame.transform.scale(surf, ICON_SIZE)
             except Exception as e:
                 print(f"Warning: could not load icon for class {class_id} ({path}): {e}")
@@ -47,6 +59,16 @@ class HUD:
             self.ego_icon = pygame.transform.scale(surf, EGO_CAR_ICON_SIZE)
         except Exception as e:
             print(f"Cound not load the proper image on ego car on {e}")
+
+            car_icon = self.icons.get(2)
+
+            if car_icon is not None:
+                tinted = tint_surface(car_icon, (90, 90, 230))
+
+                self.ego_icon = pygame.transform.scale(tinted, EGO_CAR_ICON_SIZE)
+
+                print(" Using a tinted copy of the ego car")
+
 
             
     def _get_scaled_icon(self, class_id, scale):

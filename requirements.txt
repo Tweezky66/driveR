@@ -10,3 +10,4 @@ pygame
 pyttsx3
 screeninfo
 carla
+picamera2
