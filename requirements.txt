@@ -11,3 +11,5 @@ pyttsx3
 screeninfo
 carla
 picamera2
+argparse
+queue

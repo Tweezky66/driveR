@@ -1,7 +1,7 @@
 import pygame
 from screeninfo import get_monitors
 
-from visualization.icon_map import ICON_PATHS, ICON_SIZE, EGO_CAR_ICON_PATH, EGO_CAR_ICON_SIZE, DEFAULT_ICON_SIZE
+from visualization.icon_map import ICON_PATHS, ICONS_SIZES, EGO_CAR_ICON_PATH, EGO_CAR_ICON_SIZE, DEFAULT_ICON_SIZE
 
 
 
@@ -47,8 +47,8 @@ class HUD:
         for class_id, path in ICON_PATHS.items():
             try:
                 surf = pygame.image.load(path).convert_alpha()
-                base_size = ICON_SIZE.get(class_id, DEFAULT_ICON_SIZE)
-                self.icons[class_id] = pygame.transform.scale(surf, ICON_SIZE)
+                base_size = ICONS_SIZES.get(class_id, DEFAULT_ICON_SIZE)
+                self.icons[class_id] = pygame.transform.scale(surf, ICONS_SIZES)
             except Exception as e:
                 print(f"Warning: could not load icon for class {class_id} ({path}): {e}")
 
