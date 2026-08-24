@@ -14,13 +14,13 @@ ICON_PATHS = {
 
 ICONS_SIZES = {
     0: (18, 30),
-    2: (28, 44),
+    2: (50, 66),
     3: (24, 28),
-    5: (26, 64),
-    7: (34, 60),
+    5: (36, 82),
+    7: (45, 86),
 }
 
-DEFAULT_ICON_SIZE = (28, 44)
+DEFAULT_ICON_SIZE = (50, 66)
  
 
 EGO_CAR_ICON_PATH = ICONS_DIR / "car_backward.png"

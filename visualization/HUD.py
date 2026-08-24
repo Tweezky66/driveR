@@ -86,11 +86,29 @@ class HUD:
         center_x = self.width * 0.5
         horizon_y = int(self.height * 0.3)
 
-        for i in range(-500, 500, 100):
-            pygame.draw.line(self.screen, self.colors["grid"], (center_x, horizon_y), (center_x + i, self.height), 2)
-
-        for y in range(horizon_y + 50, self.height, 40):
-            pygame.draw.line(self.screen, self.colors["grid"], (0, y), (self.width, y), 1)
+        top_road_w = 40 
+        bot_road_w = 750       
+    
+        top_shoulder_w = 60
+        bot_shoulder_w = 900
+    
+        outer_poly = [
+            (center_x - top_shoulder_w // 2, horizon_y),
+            (center_x + top_shoulder_w // 2, horizon_y),
+            (center_x + bot_shoulder_w // 2, self.height),
+            (center_x - bot_shoulder_w // 2, self.height)
+        ]
+        pygame.draw.polygon(self.screen, (60, 60, 65), outer_poly)
+    
+        road_poly = [
+            (center_x - top_road_w // 2, horizon_y),
+            (center_x + top_road_w // 2, horizon_y),
+            (center_x + bot_road_w // 2, self.height),
+            (center_x - bot_road_w // 2, self.height)
+        ]
+        pygame.draw.polygon(self.screen, (25, 25, 30), road_poly)
+    
+        
 
     def world_to_screen(self, x_lateral, z_forward):
         origin_x = self.width // 2
