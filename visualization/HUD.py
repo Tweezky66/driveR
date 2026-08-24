@@ -48,7 +48,7 @@ class HUD:
             try:
                 surf = pygame.image.load(path).convert_alpha()
                 base_size = ICONS_SIZES.get(class_id, DEFAULT_ICON_SIZE)
-                self.icons[class_id] = pygame.transform.scale(surf, ICONS_SIZES)
+                self.icons[class_id] = pygame.transform.scale(surf, base_size)
             except Exception as e:
                 print(f"Warning: could not load icon for class {class_id} ({path}): {e}")
 

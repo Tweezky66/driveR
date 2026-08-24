@@ -100,7 +100,7 @@ class CarlaFrameSource:
 
         image = self._queue.get()
         arr = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4))
-        return arr[:, :, :3]
+        return True, arr[:, :, :3]
 
     def close(self):
         self.camera.stop()
