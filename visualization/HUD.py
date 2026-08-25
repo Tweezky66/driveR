@@ -82,6 +82,17 @@ class HUD:
             self._scaled_icon_cache[key] = pygame.transform.scale(base, (int(w * bucket), int(h * bucket)))
         return self._scaled_icon_cache[key]
 
+    def _dectlutter_rect(self, rect, placed_rect, max_shift=40, step=6):
+        if not any(rect.colliderect(r) for r in placed_rect):
+            return rect # basicly no collision detected
+
+        for attempt in range(1, max_shift // step + 1):
+            for direction in (1, -1):
+                candidate = rect.move(direction * attempt * step, 0)
+                if not any(candidate.colliderect(r) for r in placed_rect):
+                    return candidate # another fallback but for calibrated rectangle
+        return rect 
+
     def draw_3d_grid(self):
         center_x = self.width * 0.5
         horizon_y = int(self.height * 0.3)
@@ -139,7 +150,9 @@ class HUD:
             if z_fwd <= 0:
                 continue
             projected.append((z_fwd, x_lat, det))
-        projected.sort(key=lambda p: p[0], reverse=True)  
+        projected.sort(key=lambda p: p[0], reverse=True) 
+
+        placed_rect = []  # for _decluter_rect 
 
         for z_fwd, x_lat, det in projected:
             sx, sy = self.world_to_screen(x_lat, z_fwd)
@@ -151,10 +164,17 @@ class HUD:
             icon = self._get_scaled_icon(det["class_id"], scale)
             if icon is not None:
                 rect = icon.get_rect(center=(sx, sy))
+                rect = self._dectlutter_rect(rect, placed_rect)
                 self.screen.blit(icon, rect)
+
+                placed_rect.append(rect) 
             else:
                 color = self.colors["warning"] if z_fwd < 15 else self.colors["detected car"]
-                pygame.draw.circle(self.screen, color, (sx, sy), int(8 * scale))
+                r = pygame.Rect(0, 0, int(16 * scale), int(16 * scale))
+                r.center = (sx, sy)
+                r = self._dectlutter_rect(r, placed_rect)
+                pygame.draw.circle(self.screen, color, r.center, int(8 * scale))
+                placed_rect.append(r)
 
         speed_surface = self.font.render(f"Speed: {speed_kmh} km/h", True, (255, 255, 255))
         self.screen.blit(speed_surface, (20, 20))
