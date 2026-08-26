@@ -7,6 +7,7 @@ from perception.Detector import Detector, DEFAULT_CLASSES
 from perception.BEVTransform import BEVTransform, estimate_placeholder_homography
 from sim.frame_sources import get_source
 from visualization.HUD import HUD
+from perception.tracker import Tracker
 
 TEST_VIDEO_PATH = "Datasets/test.mov"
 HOMOGRAPHY_PATH = "homography.npy"
@@ -22,6 +23,7 @@ def main():
 
     detector = Detector()
     source = get_source(args.source, video_path=TEST_VIDEO_PATH)
+    tracker = Tracker()
     
 
     if not source.is_opened():
@@ -73,12 +75,13 @@ def main():
         result = detector.predict(frame, classes=DEFAULT_CLASSES)
 
         detections = detector.extract_detections(result)
+        tracked = tracker.update(detections, frame)
 
         annotated = result.plot()
         cv2.imshow("Raw detections", annotated)
 
         running = hud.handle_events()
-        hud.render(detections)
+        hud.render(tracked)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
