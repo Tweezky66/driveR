@@ -5,9 +5,9 @@ import numpy as np
  
 from perception.Detector import Detector, DEFAULT_CLASSES
 from perception.BEVTransform import BEVTransform, estimate_placeholder_homography
+from perception.tracker import Tracker
 from sim.frame_sources import get_source
 from visualization.HUD import HUD
-from perception.tracker import Tracker
 
 TEST_VIDEO_PATH = "Datasets/test.mov"
 HOMOGRAPHY_PATH = "homography.npy"

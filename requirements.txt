@@ -14,3 +14,4 @@ picamera2
 argparse
 queue
 deep_sort_realtime
+pybind11
