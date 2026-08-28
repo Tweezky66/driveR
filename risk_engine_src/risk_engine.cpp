@@ -1,4 +1,4 @@
-#include <pybind/pybind11.h>
+#include <pybind11/pybind11.h>
 
 namespace py = pybind11;
 
@@ -6,11 +6,11 @@ struct RiskResult {
     double closing_speed;
     double ttc;
     int risk_level;
-}
+};
 
 RiskResult evaluate_risk(double prev_z, double curr_z, double dt, double caution_ttc=4.0, double warning_ttc=2.0) {
 
-    RislResult result{0.0, -1.0, 0}
+    RiskResult result{0.0, -1.0, 0};
     
     if (dt <= 0 || curr_z <= 0) {
         return result;  // negative distance or change in time, return
@@ -22,19 +22,19 @@ RiskResult evaluate_risk(double prev_z, double curr_z, double dt, double caution
     result.closing_speed = closing_speed;
     
 
-    if (clossing_speed <= 0.0) {
-        return closing_speed; 
+    if (closing_speed <= 0.0) {
+        return result; 
     }
 
     double ttc = curr_z / closing_speed;
-    result.ttc = tcc;
+    result.ttc = ttc;
 
     if (ttc <= warning_ttc) {
         result.risk_level = 2;
     } else if (ttc <= caution_ttc) {
         result.risk_level = 1;
     }
-    return risk_level;
+    return result;
 
 }
 

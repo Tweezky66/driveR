@@ -1,5 +1,5 @@
 import time
-import risk_engine_src as _risk
+import risk_engine_cpp as _risk
 
 
 class RiskManager:

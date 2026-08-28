@@ -5,7 +5,7 @@ from setuptools import setup
 ext_modules = [
     Pybind11Extension(
         "risk_engine_cpp",
-        ["risk_engine.cpp"],
+        ["risk_engine_src/risk_engine.cpp"],
         cxx_std= 17
     ),
 ]

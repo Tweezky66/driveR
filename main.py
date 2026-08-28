@@ -6,6 +6,7 @@ import numpy as np
 from perception.Detector import Detector, DEFAULT_CLASSES
 from perception.BEVTransform import BEVTransform, estimate_placeholder_homography
 from perception.tracker import Tracker
+from perception.risk_manager import RiskManager
 from sim.frame_sources import get_source
 from visualization.HUD import HUD
 
@@ -61,6 +62,7 @@ def main():
         H = estimate_placeholder_homography(frame_w, frame_h)
 
     bev = BEVTransform(H)
+    risk_manager = RiskManager(bev)
     hud = HUD(bev)
 
     running = True
@@ -76,6 +78,7 @@ def main():
 
         detections = detector.extract_detections(result)
         tracked = tracker.update(detections, frame)
+        risk_manager.update(tracked)
 
         annotated = result.plot()
         cv2.imshow("Raw detections", annotated)
