@@ -36,12 +36,14 @@ class HUD:
             "grid": (50, 50, 60),
             "your car": (30, 30, 90),
             "detected car": (60, 170, 190),
+            "caution": (230, 180, 60),
             "warning": (255, 50, 50),
         }
 
         self.font = pygame.font.SysFont("segoeui", 24)
         self.pixels_per_meter = 20
         self._scaled_icon_cache = {}
+        self._risk_tint_cache = {}
 
         self.icons = {}
         for class_id, path in ICON_PATHS.items():
@@ -92,6 +94,17 @@ class HUD:
                 if not any(candidate.colliderect(r) for r in placed_rect):
                     return candidate # another fallback but for calibrated rectangle
         return rect 
+
+    def _get_risk_icon(self, class_id, scale, risk_level):
+        base = self._get_scaled_icon(class_id, scale)
+        if base is None or risk_level == 0:
+            return base 
+        bucket = round(scale, 1)
+        key = (class_id, bucket, risk_level)
+        if key not in self._risk_tint_cache:
+            color = self.colors["caution"] if risk_level == 1 else self.colors["warning"]
+            self._risk_tint_cache[key] = tint_surface(base, color)
+        return self._risk_tint_cache[key] 
 
     def draw_3d_grid(self):
         center_x = self.width * 0.5
@@ -161,7 +174,9 @@ class HUD:
 
             scale = max(0.5, min(1.5, 15 / max(z_fwd, 5)))
 
-            icon = self._get_scaled_icon(det["class_id"], scale)
+            risk_level = det.get("risk_level", 0)
+
+            icon = self._get_risk_icon(det["class_id"], scale, risk_level)
             if icon is not None:
                 rect = icon.get_rect(center=(sx, sy))
                 rect = self._dectlutter_rect(rect, placed_rect)
@@ -169,7 +184,12 @@ class HUD:
 
                 placed_rect.append(rect) 
             else:
-                color = self.colors["warning"] if z_fwd < 15 else self.colors["detected car"]
+                if risk_level == 2:
+                    color = self.colors["warning"]
+                elif risk_level == 1:
+                    color = self.colors["caution"]
+                else:
+                    color = self.colors["detected car"]
                 r = pygame.Rect(0, 0, int(16 * scale), int(16 * scale))
                 r.center = (sx, sy)
                 r = self._dectlutter_rect(r, placed_rect)
