@@ -23,5 +23,5 @@ ICONS_SIZES = {
 DEFAULT_ICON_SIZE = (50, 66)
  
 
-EGO_CAR_ICON_PATH = ICONS_DIR / "car_backward.png"
+EGO_CAR_ICON_PATH = ICONS_DIR / "ego_car.png"
 EGO_CAR_ICON_SIZE = (180, 180)
