@@ -42,6 +42,6 @@ class RiskManager:
 
         stale = [tid for tid, (_, t) in self._history.items() if tid not in seen_ids and now - t > self.stale_after]
         for tid in stale:
-            del tid
+            del self._history[tid]
 
         return tracked

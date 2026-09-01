@@ -1,7 +1,7 @@
 import pygame
 from screeninfo import get_monitors
 
-from visualization.icon_map import ICON_PATHS, ICONS_SIZES, EGO_CAR_ICON_PATH, EGO_CAR_ICON_SIZE, DEFAULT_ICON_SIZE
+from visualization.icon_map import ICON_PATHS, ICONS_SIZES, EGO_CAR_ICON_PATH, EGO_CAR_ICON_SIZE, DEFAULT_ICON_SIZE, WARNING_SIGN, CAUTION_SIGN
 
 
 
@@ -43,7 +43,7 @@ class HUD:
         self.font = pygame.font.SysFont("segoeui", 24)
         self.pixels_per_meter = 20
         self._scaled_icon_cache = {}
-        self._risk_tint_cache = {}
+        self._risk_risk_cache = {}
 
         self.icons = {}
         for class_id, path in ICON_PATHS.items():
@@ -53,6 +53,13 @@ class HUD:
                 self.icons[class_id] = pygame.transform.scale(surf, base_size)
             except Exception as e:
                 print(f"Warning: could not load icon for class {class_id} ({path}): {e}")
+
+
+        self.risk_icons = {}
+
+        self._load_risk_icon(risk_level=1, path=CAUTION_SIGN)
+
+        self._load_risk_icon(risk_level=2, path=WARNING_SIGN)
 
 
         self.ego_icon = None
@@ -71,6 +78,43 @@ class HUD:
 
                 print(" Using a tinted copy of the ego car")
 
+
+    def _load_risk_icon(self, risk_level, path):
+        try:
+            surface = pygame.image.load(path).convert_alpha()
+            base_size = (50, 50)
+            self.risk_icons[risk_level] = pygame.transform.smoothscale(surface, base_size)
+        except Exception as e:
+            print(f"Could not load {risk_level}: {e}")
+
+    def _get_scaled_risk_icon(self, risk_level, scale):
+
+
+        bucket = round(scale, 1)
+        key = (risk_level, bucket)
+
+        if key not in self._scaled_risk_cache:
+
+            base = self.risk_icons.get(risk_level)
+
+            if base is None:
+                return None
+
+            width, height = base.get_size()
+
+            new_size = (
+                max(1, int(width * bucket)),
+                max(1, int(height * bucket)),
+            )
+
+            self._scaled_risk_cache[key] = (
+                pygame.transform.smoothscale(
+                    base,
+                    new_size,
+                )
+            )
+
+        return self._scaled_risk_cache[key]
 
             
     def _get_scaled_icon(self, class_id, scale):
@@ -96,15 +140,17 @@ class HUD:
         return rect 
 
     def _get_risk_icon(self, class_id, scale, risk_level):
-        base = self._get_scaled_icon(class_id, scale)
-        if base is None or risk_level == 0:
-            return base 
-        bucket = round(scale, 1)
-        key = (class_id, bucket, risk_level)
-        if key not in self._risk_tint_cache:
-            color = self.colors["caution"] if risk_level == 1 else self.colors["warning"]
-            self._risk_tint_cache[key] = tint_surface(base, color)
-        return self._risk_tint_cache[key] 
+        if risk_level <= 0:
+            return self._get_scaled_icon(class_id, scale)
+            
+        if risk_level == 1:
+            return self._get_scaled_risk_icon(1, scale)
+
+        if risk_level == 2:
+            return self._get_scaled_risk_icon(2, scale)
+
+        
+        raise ValueError(f"Uncorrect risk level: {risk_level}")
 
     def draw_3d_grid(self):
         center_x = self.width * 0.5
@@ -172,9 +218,14 @@ class HUD:
             if not (0 <= sx <= self.width and 0 <= sy <= self.height):
                 continue
 
-            scale = max(0.5, min(1.5, 15 / max(z_fwd, 5)))
+            
 
             risk_level = det.get("risk_level", 0)
+
+            if risk_level > 0:
+                scale = max(0.7, min(1.5, 18 / max(z_fwd, 5)))
+            else:
+                scale = max(0.5, min(1.5, 15 / max(z_fwd, 5)))
 
             icon = self._get_risk_icon(det["class_id"], scale, risk_level)
             if icon is not None:
@@ -183,18 +234,6 @@ class HUD:
                 self.screen.blit(icon, rect)
 
                 placed_rect.append(rect) 
-            else:
-                if risk_level == 2:
-                    color = self.colors["warning"]
-                elif risk_level == 1:
-                    color = self.colors["caution"]
-                else:
-                    color = self.colors["detected car"]
-                r = pygame.Rect(0, 0, int(16 * scale), int(16 * scale))
-                r.center = (sx, sy)
-                r = self._dectlutter_rect(r, placed_rect)
-                pygame.draw.circle(self.screen, color, r.center, int(8 * scale))
-                placed_rect.append(r)
 
         speed_surface = self.font.render(f"Speed: {speed_kmh} km/h", True, (255, 255, 255))
         self.screen.blit(speed_surface, (20, 20))

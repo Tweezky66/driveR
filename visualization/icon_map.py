@@ -26,6 +26,7 @@ DEFAULT_ICON_SIZE = (50, 66)
 
 
 WARNING_SIGN = ICONS_DIR / "warning_sign.png"
+CAUTION_SIGN = ICONS_DIR / "caution_sign.png"
  
 
 EGO_CAR_ICON_PATH = ICONS_DIR / "ego_car.png"
