@@ -43,7 +43,7 @@ class HUD:
         self.font = pygame.font.SysFont("segoeui", 24)
         self.pixels_per_meter = 20
         self._scaled_icon_cache = {}
-        self._risk_risk_cache = {}
+        self._scaled_risk_cache = {}
 
         self.icons = {}
         for class_id, path in ICON_PATHS.items():
