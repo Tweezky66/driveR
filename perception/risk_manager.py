@@ -1,12 +1,15 @@
 import time
 import risk_engine_cpp as _risk
+from collections import deque
 
 
 class RiskManager:
 
-    def __init__(self, bev, stale_after=1.0):
+    def __init__(self, bev, stale_after=1.0, window_size=6, min_window_dt=0.15):
         self.bev = bev
         self.stale_after = stale_after
+        self.window_size = window_size
+        self.min_window_dt = min_window_dt
         self._history = {} # Caching (z_forward, timestamp)
 
 
@@ -22,25 +25,37 @@ class RiskManager:
 
             track_id = det["track_id"]
             seen_ids.add(track_id)
+            window = self._history.setdefault(track_id, deque(maxlen=self.window_size))
 
-            prev = self._history.get(track_id)
-            if prev is not None and  z_fwd > 0:
-                prev_z, prev_t = prev
-                dt = now - prev_t
-                result = _risk.evaluate_risk(prev_z=prev_z, curr_z=z_fwd, dt=dt)
+            if z_fwd > 0:
+                oldest = window[0] if window else None
+                if oldest is not None and (now - oldest[1]) >= self.min_window_dt:
+                    prev_z, prev_t = oldest # keep track of frames position and time
+                    dt = now - prev_t
+                    result = _risk.evaluate_risk(prev_z=prev_z, curr_z=z_fwd, dt=dt)
 
-                det["closing_speed"] = result.closing_speed
-                det["ttc"] = result.ttc
-                det["risk_level"] = result.risk_level
 
+                    det["closing_speed"] = result.closing_speed
+                    det["ttc"] = result.ttc
+                    det["risk_level"] = result.risk_level
+                else:
+                    det["closing_speed"] = 0.0
+                    det["ttc"] = -1
+                    det["risk_level"] = 0
+
+                window.append((z_fwd, now))
             else:
                 det["closing_speed"] = 0.0
-                det["ttc"] = -1.0
+                det["ttc"] = -1
                 det["risk_level"] = 0
 
-            self._history[track_id] = (z_fwd, now)
+    
 
-        stale = [tid for tid, (_, t) in self._history.items() if tid not in seen_ids and now - t > self.stale_after]
+
+
+
+
+        stale = [tid for tid, window in self._history.items() if tid not in seen_ids and window and now - window[-1][1] > self.stale_after]
         for tid in stale:
             del self._history[tid]
 

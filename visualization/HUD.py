@@ -16,7 +16,7 @@ def tint_surface(surface, color_rgb):
 
 
 class HUD:
-    def __init__(self, bev_transform):
+    def __init__(self, bev_transform, mode="standalone", panel_width_ratio=0.32):
         pygame.init()
         try:
             resolution = get_monitors()[0]
@@ -31,6 +31,24 @@ class HUD:
         self.clock = pygame.time.Clock()
         self.bev = bev_transform
 
+        self.mode = mode
+
+        if self.mode == "panel":
+            self.panel_x0 = 0
+            self.panel_y0 = 0
+            self.panel_w = max(240, int(self.width * panel_width_ratio)) # scaling HUD width to be side pannel
+            self.panel_h = self.height
+            self._geo_scale = self.panel_w / 1920
+            panel_scale_width = self.panel_w / self. width
+            self.pixels_per_meter = max(6, int(20 * panel_scale_width))
+        else:
+            self.panel_x0 = 0
+            self.panel_y0 = 0
+            self.panel_w = self.width
+            self.panel_h = self.height
+            self._geo_scale = 1.0
+            self.pixels_per_meter = 20
+
         self.colors = {
             "background": (25, 25, 30),
             "grid": (50, 50, 60),
@@ -38,12 +56,14 @@ class HUD:
             "detected car": (60, 170, 190),
             "caution": (230, 180, 60),
             "warning": (255, 50, 50),
+            "panel_bg": (18, 18, 22, 235),
+            "panel_border": (90, 90, 100),
         }
 
         self.font = pygame.font.SysFont("segoeui", 24)
-        self.pixels_per_meter = 20
         self._scaled_icon_cache = {}
         self._scaled_risk_cache = {}
+        self._tinted_icon_cache = {}
 
         self.icons = {}
         for class_id, path in ICON_PATHS.items():
@@ -139,67 +159,119 @@ class HUD:
                     return candidate # another fallback but for calibrated rectangle
         return rect 
 
+
+    def _get_tinted_class_icon(self, class_id, risk_level):
+        key = (class_id, risk_level)
+        if key not in self._tinted_icon_cache:
+            base = self.icons.get(class_id)
+            if base is None:
+                return None
+            if risk_level == 1:
+                tinted = tint_surface(base, self.colors["caution"])
+            elif risk_level == 2:
+                tinted = tint_surface(base, self.colors["warning"])
+            else:
+                tinted = base
+            self._tinted_icon_cache[key] = tinted
+        return self._tinted_icon_cache[key] 
+
+
+    
     def _get_risk_icon(self, class_id, scale, risk_level):
-        if risk_level <= 0:
+        if risk_level not in (0, 1, 2):
+            raise ValueError(f"Uncorrect risk level: {risk_level}")
+
+        if risk_level == 0:
             return self._get_scaled_icon(class_id, scale)
-            
-        if risk_level == 1:
-            return self._get_scaled_risk_icon(1, scale)
 
-        if risk_level == 2:
-            return self._get_scaled_risk_icon(2, scale)
+        tinted = self._get_tinted_class_icon(class_id, risk_level)
 
-        
-        raise ValueError(f"Uncorrect risk level: {risk_level}")
+        if tinted is None:
+            return self._get_scaled_risk_icon(risk_level, scale)
+
+        bucket = round(scale, 1)
+        cache_key = (class_id, risk_level, bucket)
+        if cache_key not in self._scaled_icon_cache:
+            w, h = tinted.get_size()
+            self._scaled_icon_cache[cache_key] = pygame.transform.scale(
+                tinted, 
+                (
+                    max(1, int(h * bucket)),
+                    max(1, int(w * bucket))
+                )
+            )
+        return self._scaled_icon_cache[cache_key]
 
     def draw_3d_grid(self):
-        center_x = self.width * 0.5
-        horizon_y = int(self.height * 0.3)
+        center_x = self.panel_x0 + self.panel_w * 0.5
+        horizon_y = self.panel_y0 + int(self.panel_h * 0.3) # use panel variable for starting pt if panel gets as mode
+        bottom_y = self.panel_y0 + self.panel_h
+        
 
-        top_road_w = 40 
-        bot_road_w = 750       
+        top_road_w = max(12, int(40 * self._geo_scale))
+        bot_road_w = max(80, int(750 * self._geo_scale))
     
-        top_shoulder_w = 60
-        bot_shoulder_w = 900
+        top_shoulder_w = max(18, int(60 * self._geo_scale))
+        bot_shoulder_w = max(100, int(900 * self._geo_scale))
     
         outer_poly = [
             (center_x - top_shoulder_w // 2, horizon_y),
             (center_x + top_shoulder_w // 2, horizon_y),
-            (center_x + bot_shoulder_w // 2, self.height),
-            (center_x - bot_shoulder_w // 2, self.height)
+            (center_x + bot_shoulder_w // 2, bottom_y),
+            (center_x - bot_shoulder_w // 2, bottom_y)
         ]
         pygame.draw.polygon(self.screen, (60, 60, 65), outer_poly)
     
         road_poly = [
             (center_x - top_road_w // 2, horizon_y),
             (center_x + top_road_w // 2, horizon_y),
-            (center_x + bot_road_w // 2, self.height),
-            (center_x - bot_road_w // 2, self.height)
+            (center_x + bot_road_w // 2, bottom_y),
+            (center_x - bot_road_w // 2, bottom_y)
         ]
         pygame.draw.polygon(self.screen, (25, 25, 30), road_poly)
     
         
 
     def world_to_screen(self, x_lateral, z_forward):
-        origin_x = self.width // 2
-        origin_y = self.height - 100  
+        origin_x = self.panel_x0 + self.panel_w // 2
+        origin_y = self.panel_y0 + self.panel_h - int(100 * self._geo_scale)  
         screen_x = origin_x + int(x_lateral * self.pixels_per_meter)
         screen_y = origin_y - int(z_forward * self.pixels_per_meter)  
         return screen_x, screen_y
 
-    def render(self, detections, speed_kmh=0):
-        self.screen.fill(self.colors["background"])
+
+    def _draw_panel_frame(self):
+        panel_surf = pygame.Surface((self.panel_w, self.panel_h), pygame.SRCALPHA)
+        panel_surf.fill(self.colors["panel_bg"])
+        self.screen.blit(panel_surf, (self.panel_x0, self.panel_y0))
+        pygame.draw.rect(
+            self.screen,
+            self.colors["panel_border"],
+            (self.panel_x0, self.panel_y0, self.panel_w, self.panel_h),
+            width=2,
+        )
+
+
+    def render(self, detections, speed_kmh=0, camera_frame=None):
+        if self.mode == "panel" and camera_frame is not None:
+            bg = self._frame_to_surface(camera_frame)
+            self.screen.blit(bg, (0, 0))
+            self._draw_panel_frame()
+        else:
+            self.screen.fill(self.colors["background"])
+
         self.draw_3d_grid()
 
     
-        ego_x, ego_y = self.width // 2, self.height - 60
+        ego_x = self.panel_x0 + self.panel_w // 2
+        ego_y = self.panel_y0 + self.panel_h - int(60 * self._geo_scale)
         if self.ego_icon is not None:
             rect = self.ego_icon.get_rect(center=(ego_x, ego_y))
             self.screen.blit(self.ego_icon, rect)
         else:
             pygame.draw.rect(
                 self.screen, self.colors["your car"],
-                (self.width // 2 - 20, self.height - 100, 40, 80),
+                (ego_x - 20, ego_y - 20, 40, 80),
                 border_radius=10,
             )
 
@@ -213,9 +285,11 @@ class HUD:
 
         placed_rect = []  # for _decluter_rect 
 
+        panel_bounds = pygame.Rect(self.panel_x0, self.panel_y0, self.panel_w, self.panel_h)
+
         for z_fwd, x_lat, det in projected:
             sx, sy = self.world_to_screen(x_lat, z_fwd)
-            if not (0 <= sx <= self.width and 0 <= sy <= self.height):
+            if not panel_bounds.collidepoint(sx, sy):
                 continue
 
             
@@ -226,6 +300,8 @@ class HUD:
                 scale = max(0.7, min(1.5, 18 / max(z_fwd, 5)))
             else:
                 scale = max(0.5, min(1.5, 15 / max(z_fwd, 5)))
+            scale *= self._geo_scale if self._geo_scale > 0 else 1.0
+            scale = max(0.25, scale)
 
             icon = self._get_risk_icon(det["class_id"], scale, risk_level)
             if icon is not None:
@@ -233,13 +309,28 @@ class HUD:
                 rect = self._dectlutter_rect(rect, placed_rect)
                 self.screen.blit(icon, rect)
 
+                badge = self._get_scaled_risk_icon(risk_level, scale) if risk_level > 0 else None
+                if badge is not None:
+                    badge_rect = badge.get_rect(midbottom=(rect.centerx, rect.top + 6))
+                    self.screen.blit(badge_rect, badge_rect)
+
                 placed_rect.append(rect) 
 
         speed_surface = self.font.render(f"Speed: {speed_kmh} km/h", True, (255, 255, 255))
-        self.screen.blit(speed_surface, (20, 20))
+        self.screen.blit(speed_surface, (self.panel_x0 + 20, self.self.panel_y0 + 20))
 
         pygame.display.flip()
         self.clock.tick(30)
+
+    def _frame_to_surface(self, frame_gbr):
+        import cv2
+
+        frame_rgb = cv2.cvtColor(frame_gbr, cv2.COLOR_BGR2RGB)
+        h, w = frame_gbr.shape[:2]
+        surf = pygame.image.frombuffer(frame_rgb.tobytes(), (w, h), "RGB")
+        if (w, h) != (self.width, self.height):
+            surf = pygame.transform.smoothscale(frame_rgb, (self.width, self.height))
+        return surf
 
     def handle_events(self):
         for event in pygame.event.get():

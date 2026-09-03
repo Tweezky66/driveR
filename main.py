@@ -11,6 +11,7 @@ from sim.frame_sources import get_source
 from visualization.HUD import HUD
 
 TEST_VIDEO_PATH = "Datasets/test.mov"
+NEAR_ACCIDENT_PATH = "Datasets/brake_check.mp4"
 HOMOGRAPHY_PATH = "homography.npy"
 
 
@@ -23,7 +24,7 @@ def main():
     
 
     detector = Detector()
-    source = get_source(args.source, video_path=TEST_VIDEO_PATH)
+    source = get_source(args.source, video_path=NEAR_ACCIDENT_PATH)
     tracker = Tracker()
     
 
