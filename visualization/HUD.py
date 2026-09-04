@@ -317,7 +317,7 @@ class HUD:
                 placed_rect.append(rect) 
 
         speed_surface = self.font.render(f"Speed: {speed_kmh} km/h", True, (255, 255, 255))
-        self.screen.blit(speed_surface, (self.panel_x0 + 20, self.self.panel_y0 + 20))
+        self.screen.blit(speed_surface, (self.panel_x0 + 20, self.panel_y0 + 20))
 
         pygame.display.flip()
         self.clock.tick(30)
@@ -329,7 +329,7 @@ class HUD:
         h, w = frame_gbr.shape[:2]
         surf = pygame.image.frombuffer(frame_rgb.tobytes(), (w, h), "RGB")
         if (w, h) != (self.width, self.height):
-            surf = pygame.transform.smoothscale(frame_rgb, (self.width, self.height))
+            surf = pygame.transform.smoothscale(surf, (self.width, self.height))
         return surf
 
     def handle_events(self):

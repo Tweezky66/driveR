@@ -20,6 +20,11 @@ def main():
     parser.add_argument("--source", choices=["video", "webcam", "carla", "picamera"], default="video",
     help="video (default, uses TEST_VIDEO_PATH), webcam, picamera (Pi only), or carla (needs a running server)",
     )
+
+    parser.add_argument("--hud-mode", choices=["standalone", "panel"], default="standalone",
+    help="choose options between  'standalone' and 'panel'")
+
+
     args = parser.parse_args()
     
 
@@ -64,7 +69,7 @@ def main():
 
     bev = BEVTransform(H)
     risk_manager = RiskManager(bev)
-    hud = HUD(bev)
+    hud = HUD(bev, mode=args.hud_mode)
 
     running = True
 
@@ -85,7 +90,14 @@ def main():
         cv2.imshow("Raw detections", annotated)
 
         running = hud.handle_events()
-        hud.render(tracked)
+
+        if args.hud_mode == "panel":
+            hud.render(tracked, camera_frame=annotated)
+        else:
+            cv2.imshow("Raw Detections", annotated)
+            hud.render(tracked)
+
+
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
