@@ -5,12 +5,15 @@ from collections import deque
 
 class RiskManager:
 
-    def __init__(self, bev, stale_after=1.0, window_size=6, min_window_dt=0.15):
+    def __init__(self, bev, stale_after=1.0, window_size=6, min_window_dt=0.15, debug=False):
         self.bev = bev
         self.stale_after = stale_after
         self.window_size = window_size
         self.min_window_dt = min_window_dt
         self._history = {} # Caching (z_forward, timestamp)
+        self.debug = debug
+        self._last_debug_print = 0.0
+
 
 
     def update(self, tracked):
@@ -59,4 +62,11 @@ class RiskManager:
         for tid in stale:
             del self._history[tid]
 
+        if self.debug and  now - self._last_debug_print > 1.0:
+            self._last_debug_print = now
+            levels = {det["track_id"]: (det["risk_level"], round(det["ttc"], 2)) for det in tracked}
+            print(f"[risk_manager] -> track_id, (risk_level, ttc) : {levels}")
+
         return tracked
+
+        

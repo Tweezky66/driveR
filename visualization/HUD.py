@@ -16,7 +16,7 @@ def tint_surface(surface, color_rgb):
 
 
 class HUD:
-    def __init__(self, bev_transform, mode="standalone", panel_width_ratio=0.32):
+    def __init__(self, bev_transform, mode="standalone", panel_width_ratio=0.32, panel_side="right"):
         pygame.init()
         try:
             resolution = get_monitors()[0]
@@ -32,11 +32,12 @@ class HUD:
         self.bev = bev_transform
 
         self.mode = mode
+        self.panel_side = panel_side
 
         if self.mode == "panel":
-            self.panel_x0 = 0
             self.panel_y0 = 0
             self.panel_w = max(240, int(self.width * panel_width_ratio)) # scaling HUD width to be side pannel
+            self.panel_x0 = (self.width - self.panel_w) if panel_side == "right" else 0
             self.panel_h = self.height
             self._geo_scale = self.panel_w / 1920
             panel_scale_width = self.panel_w / self. width

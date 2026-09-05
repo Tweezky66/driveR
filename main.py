@@ -17,6 +17,7 @@ HOMOGRAPHY_PATH = "homography.npy"
 
 def main():
     parser = argparse.ArgumentParser()
+
     parser.add_argument("--source", choices=["video", "webcam", "carla", "picamera"], default="video",
     help="video (default, uses TEST_VIDEO_PATH), webcam, picamera (Pi only), or carla (needs a running server)",
     )
@@ -24,8 +25,14 @@ def main():
     parser.add_argument("--hud-mode", choices=["standalone", "panel"], default="standalone",
     help="choose options between  'standalone' and 'panel'")
 
+    parser.add_argument("--panel-side", choices=["left", "right"], default="right",
+    help=" choose the side of rendering panel sides between 'left' and 'right'"
+    )
+
 
     args = parser.parse_args()
+
+    cv2.destroyAllWindows()
     
 
     detector = Detector()
@@ -69,42 +76,44 @@ def main():
 
     bev = BEVTransform(H)
     risk_manager = RiskManager(bev)
-    hud = HUD(bev, mode=args.hud_mode)
+    hud = HUD(bev, mode=args.hud_mode, panel_side=args.panel_side)
 
     running = True
 
-    while running:
-        ok, frame = source.read()
+    try:
 
-        if not ok:
-            print("End of video stream")
-            break
+        while running:
+            ok, frame = source.read()
 
-        result = detector.predict(frame, classes=DEFAULT_CLASSES)
+            if not ok:
+                print("End of video stream")
+                break
 
-        detections = detector.extract_detections(result)
-        tracked = tracker.update(detections, frame)
-        risk_manager.update(tracked)
+            result = detector.predict(frame, classes=DEFAULT_CLASSES)
 
-        annotated = result.plot()
-        cv2.imshow("Raw detections", annotated)
+            detections = detector.extract_detections(result)
+            tracked = tracker.update(detections, frame)
+            risk_manager.update(tracked)
 
-        running = hud.handle_events()
+            annotated = result.plot()
 
-        if args.hud_mode == "panel":
-            hud.render(tracked, camera_frame=annotated)
-        else:
-            cv2.imshow("Raw Detections", annotated)
-            hud.render(tracked)
+            running = hud.handle_events()
+
+            if args.hud_mode == "panel":
+                hud.render(tracked, camera_frame=annotated)
+            else:
+                cv2.imshow("Raw Detections", annotated)
+                hud.render(tracked)
 
 
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-    source.close()
-    cv2.destroyAllWindows()
-    hud.quit()
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+    finally:
+        # Make sure to use finally to anyway run close the windows after closing a "raw detections"
+        source.close()
+        cv2.destroyAllWindows()
+        hud.quit()
 
 
 if __name__ == "__main__":
