@@ -57,14 +57,18 @@ class HUD:
             "detected car": (60, 170, 190),
             "caution": (230, 180, 60),
             "warning": (255, 50, 50),
-            "panel_bg": (18, 18, 22, 235),
+            "panel_bg": (18, 18, 22, 235), # 235 for alpha chanel to be semi-transperent
             "panel_border": (90, 90, 100),
+            "accent": (80, 210, 220),
         }
 
         self.font = pygame.font.SysFont("segoeui", 24)
+        self.font_small = pygame.font.SysFont("segoeui", 15)
+        self.font_speed = pygame.font.SysFont("segoeui", 42, bold=True)
         self._scaled_icon_cache = {}
         self._scaled_risk_cache = {}
         self._tinted_icon_cache = {}
+        self._bg_gradient = self._build_gradient_surface(self.panel_w, self.panel_h)
 
         self.icons = {}
         for class_id, path in ICON_PATHS.items():
@@ -203,6 +207,21 @@ class HUD:
             )
         return self._scaled_icon_cache[cache_key]
 
+
+
+    def _build_gradient_surface(self, w, h):
+        surf = pygame.Surface((w, max(1, h)))
+        top_color = (14, 16, 26)
+        bottom_color = (35, 38, 48)
+        for i in range(h):
+            t = i / max(1, h) # gradient cooficient
+            r = int(top_color[0] + (bottom_color[0] - top_color[0]) * t)
+            g = int(top_color[1] + (bottom_color[1] - top_color[1]) * t)
+            b = int(top_color[2] + (bottom_color[2] - top_color[2]) * t)
+            pygame.draw.line(surf, (r, g, b), (0, i), (w, i))
+        return surf
+
+
     def draw_3d_grid(self):
         center_x = self.panel_x0 + self.panel_w * 0.5
         horizon_y = self.panel_y0 + int(self.panel_h * 0.3) # use panel variable for starting pt if panel gets as mode
@@ -230,6 +249,41 @@ class HUD:
             (center_x - bot_road_w // 2, bottom_y)
         ]
         pygame.draw.polygon(self.screen, (25, 25, 30), road_poly)
+
+
+
+        # Draw a road centered line
+        dash_color = (150, 150, 90)
+        n_dashes = 10
+        for i in range(n_dashes):
+            t0 = i / n_dashes
+            t1 = i + 0.5 / n_dashes
+            if t0 < 0.03:
+                continue
+            y0 = horizon_y + (bottom_y - horizon_y) * t0
+            y1 = horizon_y + (bottom_y - horizon_y) * t1
+            width_at_t0 = top_road_w + (bot_road_w - top_road_w) * t0
+            width_at_t1 = top_road_w + (bot_road_w - top_road_w) * t1
+            line_w = max(1, int(2 * self._geo_scale * (0.4 + t0)))
+            pygame.draw.line(
+                self.screen,
+                dash_color,
+                (center_x, y0),
+                (center_x, y1),
+                width=line_w
+            )
+
+
+    def _draw_shadow(self, center_x, bottom_y, width):
+        shadow_w = max(4, int(width * 0.8))
+        shadow_h = max(2, int(shadow_w * 0.28))
+        shadow_surf = pygame.Surface((shadow_w, shadow_h), pygame.SRCALPHA)
+        pygame.draw.ellipse(shadow_surf, (0, 0, 0, 90), (0, 0, shadow_w, shadow_h))
+        rect = shadow_surf.get_rect(center=(center_x, bottom_y))
+        self.screen.blit(shadow_surf, rect)
+
+
+
     
         
 
@@ -245,6 +299,29 @@ class HUD:
         panel_surf = pygame.Surface((self.panel_w, self.panel_h), pygame.SRCALPHA)
         panel_surf.fill(self.colors["panel_bg"])
         self.screen.blit(panel_surf, (self.panel_x0, self.panel_y0))
+
+        header_h = max(28, int(40 * self._geo_scale))
+        pygame.draw.rect(
+            self.screen, (28, 30, 36),
+            (self.panel_x0, self.panel_y0, self.panel_w, self.panel_h),
+        )
+
+
+        pygame.draw.line(
+            self.screen,
+            self.colors["accent"],
+            (self.panel_x0, self.panel_y0 + header_h),
+            (self.panel_x0 + self.panel_w, self.panel_y0 + header_h),
+            width=max(2, int(2 * self._geo_scale))
+        )
+
+        title = self.font_small.render("COLLISION AVOIDANCE", True, self.colors["accent"])
+        self.screen.blit(title, title.get_rect(
+            midleft=(self.panel_x0 + 14, self.panel_y0 + header_h // 2)
+        ))
+
+
+
         pygame.draw.rect(
             self.screen,
             self.colors["panel_border"],
@@ -252,14 +329,32 @@ class HUD:
             width=2,
         )
 
+        return header_h
+
+    def _draw_speed_card(self, speed_km, x, y):
+        card_w = int(96 * max(self._geo_scale, 0.5)) + 40
+        card_h = 74
+        card = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
+        pygame.draw.rect(card, (0, 0, 0, 140), (0, 0, card_w, card_h), border_radius=10)
+        pygame.draw.rect(card, self.colors["panel_border"], (0, 0, card_w, card_h), width=1, border_radius=10)
+
+
+        value = self.font_speed.render(str(int(speed_km)), True, (255, 255, 255))
+        unit = self.font_small.render("km/h", True, (170, 170, 180))
+        card.blit(value, value.get_rect(midtop=(card_w // 2, 6)))
+        card.blit(unit, unit.get_rect(midtop=(card_w // 2, 6 + value.get_height())))
+ 
+        self.screen.blit(card, (x, y))
 
     def render(self, detections, speed_kmh=0, camera_frame=None):
+        content_top = self.panel_y0
         if self.mode == "panel" and camera_frame is not None:
             bg = self._frame_to_surface(camera_frame)
             self.screen.blit(bg, (0, 0))
-            self._draw_panel_frame()
+            header_h = self._draw_panel_frame()
+            content_top = self.panel_y0 + header_h
         else:
-            self.screen.fill(self.colors["background"])
+            self.screen.blit(self._bg_gradient, (self.panel_x0, self.panel_y0))
 
         self.draw_3d_grid()
 
@@ -267,6 +362,7 @@ class HUD:
         ego_x = self.panel_x0 + self.panel_w // 2
         ego_y = self.panel_y0 + self.panel_h - int(60 * self._geo_scale)
         if self.ego_icon is not None:
+            self._draw_shadow(ego_x, ego_y + self.ego_icon.get_height() // 2 - 4, self.ego_icon.get_width())
             rect = self.ego_icon.get_rect(center=(ego_x, ego_y))
             self.screen.blit(self.ego_icon, rect)
         else:
@@ -308,17 +404,19 @@ class HUD:
             if icon is not None:
                 rect = icon.get_rect(center=(sx, sy))
                 rect = self._dectlutter_rect(rect, placed_rect)
+                self._draw_shadow(rect.centerx, rect.bottom - 4, rect.width)
+
                 self.screen.blit(icon, rect)
 
                 badge = self._get_scaled_risk_icon(risk_level, scale) if risk_level > 0 else None
                 if badge is not None:
                     badge_rect = badge.get_rect(midbottom=(rect.centerx, rect.top + 6))
+
                     self.screen.blit(badge_rect, badge_rect)
 
                 placed_rect.append(rect) 
 
-        speed_surface = self.font.render(f"Speed: {speed_kmh} km/h", True, (255, 255, 255))
-        self.screen.blit(speed_surface, (self.panel_x0 + 20, self.panel_y0 + 20))
+        self._draw_speed_card(speed_kmh, self.panel_y0 + 14, content_top + 14)
 
         pygame.display.flip()
         self.clock.tick(30)
