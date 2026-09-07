@@ -1,10 +1,8 @@
 # driveR
 
-A monocular driver-assistance prototype exploring how far a single forward-facing
-camera can go toward  ADAS - real-time object detection, tracking,
+A monocular driver-assistance prototype  - real-time object detection, tracking,
 time-to-collision risk assessment, and a live bird's-eye-view HUD - without
-LIDAR or stereo cameras. Portfolio project; end goal is a standalone Raspberry
-Pi unit mounted behind the windshield with voice alerts.
+LIDAR or stereo cameras
 
 ![HUD demo - detected traffic rendered as icons on a top-down road view, alongside the raw detection feed](docs/hud_demo.png)
 
@@ -61,10 +59,18 @@ driveR/
 
 - Distances are only as good as your calibration - falls back to an
   uncalibrated placeholder (with a loud warning) if `homography.npy` isn't
-  present
+  present. **This is also what determines how accurate detected objects'
+  positions look on the HUD** - with the placeholder homography, icon
+  position/distance is a rough guess, not ground truth. See "Calibrating
+  for your camera" below; run it once per camera mounting.
 - Risk TTC thresholds are fixed constants, not scaled by speed
 - No lateral-trajectory awareness yet - a car closing distance in an
   adjacent lane reads the same as one merging into your lane
+- `speed_kmh` shown on the HUD is not wired to a real speed source yet -
+  it's always 0 unless you pass something into `hud.render(..., speed_kmh=...)`
+  yourself
+
+
 
 ## Setup
 
@@ -78,10 +84,23 @@ python setup.py build_ext --inplace
 # the project root - it must be importable from wherever main.py runs
 
 cd ..
-python main.py                    # default: reads Datasets/test.mov
-python main.py --source webcam    # live camera
-python main.py --source carla     # needs a running CARLA server, see below
+python main.py                            # default: reads Datasets/test.mov
+python main.py --source webcam            # live camera
+python main.py --source carla             # needs a running CARLA server, see below
+python main.py --hud-mode panel           # single window: HUD panel over the live feed
+python main.py --hud-mode panel --panel-side left
+python main.py --debug-risk               # print each track's (risk_level, ttc) once/sec
 ```
+
+### HUD modes
+
+- `--hud-mode standalone` (default): two windows - a plain `cv2.imshow`
+  "Raw detections" window with YOLO's own box/label overlay, and a
+  full-window pygame top-down HUD.
+- `--hud-mode panel`: one window. The annotated detection frame is drawn as
+  the pygame window's background, and the top-down HUD is confined to an
+  opaque panel along one edge (`--panel-side left|right`, default `right`)
+  sitting on top of it.
 
 ## Calibrating for your camera
 
