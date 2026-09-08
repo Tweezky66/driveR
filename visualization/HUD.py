@@ -40,8 +40,11 @@ class HUD:
             self.panel_x0 = (self.width - self.panel_w) if panel_side == "right" else 0
             self.panel_h = self.height
             self._geo_scale = self.panel_w / 1920
-            panel_scale_width = self.panel_w / self. width
-            self.pixels_per_meter = max(6, int(20 * panel_scale_width))
+            horizon_y = self.panel_y0 + int(self.panel_h * 0.3)
+            origin_y = self.panel_y0 + self.panel_h - int(100 * self._geo_scale)
+            usable_vertical_px = max(1, origin_y - horizon_y)
+            PANEL_MAX_RANGE_M = 50
+            self.pixels_per_meter = max(4, usable_vertical_px / PANEL_MAX_RANGE_M)
         else:
             self.panel_x0 = 0
             self.panel_y0 = 0
@@ -201,8 +204,8 @@ class HUD:
             self._scaled_icon_cache[cache_key] = pygame.transform.scale(
                 tinted, 
                 (
-                    max(1, int(h * bucket)),
-                    max(1, int(w * bucket))
+                    max(1, int(w * bucket)),
+                    max(1, int(h * bucket))
                 )
             )
         return self._scaled_icon_cache[cache_key]
@@ -226,13 +229,20 @@ class HUD:
         center_x = self.panel_x0 + self.panel_w * 0.5
         horizon_y = self.panel_y0 + int(self.panel_h * 0.3) # use panel variable for starting pt if panel gets as mode
         bottom_y = self.panel_y0 + self.panel_h
-        
 
-        top_road_w = max(12, int(40 * self._geo_scale))
-        bot_road_w = max(80, int(750 * self._geo_scale))
+
+        if self.mode == "panel":
+            top_road_w = max(6, int(self.panel_w * 0.035))
+            bot_road_w = max(60, int(self.panel_w * 0.62))
+
+            top_shoulder_w = max(10, int(self.panel_w * 0.05))
+            bot_shoulder_w = max(80, int(self.panel_w) * 0.96)
+        else:
+            top_road_w = max(12, int(40 * self._geo_scale))
+            bot_road_w = max(80, int(750 * self._geo_scale))
     
-        top_shoulder_w = max(18, int(60 * self._geo_scale))
-        bot_shoulder_w = max(100, int(900 * self._geo_scale))
+            top_shoulder_w = max(18, int(60 * self._geo_scale))
+            bot_shoulder_w = max(100, int(900 * self._geo_scale))
     
         outer_poly = [
             (center_x - top_shoulder_w // 2, horizon_y),
@@ -257,7 +267,7 @@ class HUD:
         n_dashes = 10
         for i in range(n_dashes):
             t0 = i / n_dashes
-            t1 = i + 0.5 / n_dashes
+            t1 = (i + 0.5) / n_dashes
             if t0 < 0.03:
                 continue
             y0 = horizon_y + (bottom_y - horizon_y) * t0
@@ -303,7 +313,7 @@ class HUD:
         header_h = max(28, int(40 * self._geo_scale))
         pygame.draw.rect(
             self.screen, (28, 30, 36),
-            (self.panel_x0, self.panel_y0, self.panel_w, self.panel_h),
+            (self.panel_x0, self.panel_y0, self.panel_w, header_h),
         )
 
 
@@ -412,11 +422,11 @@ class HUD:
                 if badge is not None:
                     badge_rect = badge.get_rect(midbottom=(rect.centerx, rect.top + 6))
 
-                    self.screen.blit(badge_rect, badge_rect)
+                    self.screen.blit(badge, badge_rect)
 
                 placed_rect.append(rect) 
 
-        self._draw_speed_card(speed_kmh, self.panel_y0 + 14, content_top + 14)
+        self._draw_speed_card(speed_kmh, self.panel_x0 + 14, content_top + 14)
 
         pygame.display.flip()
         self.clock.tick(30)

@@ -32,4 +32,4 @@ CAUTION_SIGN = ICONS_DIR / "caution_sign.png"
  
 
 EGO_CAR_ICON_PATH = ICONS_DIR / "ego_car.png"
-EGO_CAR_ICON_SIZE = (180, 180)
+EGO_CAR_ICON_SIZE = (120, 134)
