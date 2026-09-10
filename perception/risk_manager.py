@@ -5,7 +5,7 @@ from collections import deque
 
 class RiskManager:
 
-    def __init__(self, bev, stale_after=1.0, window_size=6, min_window_dt=0.15, debug=False):
+    def __init__(self, bev, stale_after=1.0, window_size=6, min_window_dt=0.15, debug=True):
         self.bev = bev
         self.stale_after = stale_after
         self.window_size = window_size
