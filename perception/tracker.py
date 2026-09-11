@@ -48,6 +48,7 @@ class Tracker:
 
             tracked.append({
                 "bbox": smooth_bbox,
+                "raw_bbox": list(raw_box),
                 "class_id": t.get_det_class(),
                 "track_id": t.track_id,
             })

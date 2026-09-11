@@ -22,7 +22,7 @@ class RiskManager:
         seen_ids = set()
 
         for det in tracked:
-            x_lat, z_fwd = self.bev.to_bev(det["bbox"])
+            x_lat, z_fwd = self.bev.to_bev(det.get("raw_bbox", det["bbox"])) # Make sure to add bith raw bbox and bbox
             det["x_lateral"] = x_lat
             det["z_fwd"] = z_fwd
 

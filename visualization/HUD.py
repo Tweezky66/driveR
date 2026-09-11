@@ -130,9 +130,11 @@ class HUD:
 
             width, height = base.get_size()
 
+            MIN_BADGE_PX = 22
+
             new_size = (
-                max(1, int(width * bucket)),
-                max(1, int(height * bucket)),
+                max(MIN_BADGE_PX, int(width * bucket)),
+                max(MIN_BADGE_PX, int(height * bucket)),
             )
 
             self._scaled_risk_cache[key] = (
