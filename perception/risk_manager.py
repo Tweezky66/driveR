@@ -5,7 +5,7 @@ from collections import deque
 
 class RiskManager:
 
-    def __init__(self, bev, stale_after=1.0, window_size=6, min_window_dt=0.15, debug=True):
+    def __init__(self, bev, stale_after=1.0, window_size=6, min_window_dt=0.15, debug=True, warning_distance_m=4, caution_distance_m=8):
         self.bev = bev
         self.stale_after = stale_after
         self.window_size = window_size
@@ -13,11 +13,23 @@ class RiskManager:
         self._history = {} # Caching (z_forward, timestamp)
         self.debug = debug
         self._last_debug_print = 0.0
+        self.warning_distance_m = warning_distance_m
+        self.caution_distance_m = caution_distance_m
 
 
 
-    def update(self, tracked):
-        now = time.perf_counter()
+    def _proximity_risk_level(self, z_fwd):
+        # Helper function to fallback and confirm risk_level using only distance
+        if z_fwd <= 0:
+            return 0
+        if z_fwd < self.caution_distance_m:
+            return 1
+        if z_fwd < self.warning_distance_m:
+            return 2
+        return 0
+
+    def update(self, tracked, timestamp=None):
+        now = timestamp if timestamp is not None else time.perf_counter()
 
         seen_ids = set()
 
@@ -30,6 +42,8 @@ class RiskManager:
             seen_ids.add(track_id)
             window = self._history.setdefault(track_id, deque(maxlen=self.window_size))
 
+            ttc_risk_level = 0
+
             if z_fwd > 0:
                 oldest = window[0] if window else None
                 if oldest is not None and (now - oldest[1]) >= self.min_window_dt:
@@ -40,22 +54,20 @@ class RiskManager:
 
                     det["closing_speed"] = result.closing_speed
                     det["ttc"] = result.ttc
-                    det["risk_level"] = result.risk_level
+                    ttc_risk_level = result.risk_level
                 else:
                     det["closing_speed"] = 0.0
                     det["ttc"] = -1
-                    det["risk_level"] = 0
+                    ttc_risk_level = 0
 
                 window.append((z_fwd, now))
             else:
                 det["closing_speed"] = 0.0
                 det["ttc"] = -1
-                det["risk_level"] = 0
+                ttc_risk_level = 0
 
-    
-
-
-
+            proximity_risk_level = self._proximity_risk_level(z_fwd)
+            det["risk_level"] = max(ttc_risk_level, proximity_risk_level)
 
 
         stale = [tid for tid, window in self._history.items() if tid not in seen_ids and window and now - window[-1][1] > self.stale_after]

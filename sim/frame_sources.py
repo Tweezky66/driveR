@@ -1,4 +1,5 @@
 import cv2
+import time
 
 
 class VideoFileSource:
@@ -12,6 +13,11 @@ class VideoFileSource:
     def read(self):
         image = self.cap.read()
         return image
+
+    def get_timestamp(self):
+        return self.cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+
+    
 
     def close(self):
         return self.cap.release()
@@ -28,6 +34,9 @@ class WebCamSource:
     def read(self):
         image = self.cap.read()
         return image
+
+    def get_timestamp(self):
+        return time.perf_counter()
 
     def close(self):
         self.cap.release()
@@ -51,6 +60,9 @@ class PiCameraSource:
     def read(self):
         image = self.cam.capture_array()
         return True, image
+
+    def get_timestamp(self):
+        return time.perf_counter()
 
     def close(self):
         self.cam.stop()
@@ -101,6 +113,10 @@ class CarlaFrameSource:
         image = self._queue.get()
         arr = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4))
         return True, arr[:, :, :3]
+
+
+    def get_timestamp(self):
+        return time.perf_counter()
 
     def close(self):
         self.camera.stop()

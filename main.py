@@ -93,7 +93,7 @@ def main():
 
             detections = detector.extract_detections(result)
             tracked = tracker.update(detections, frame)
-            risk_manager.update(tracked)
+            risk_manager.update(tracked, timestamp=source.get_timestamp())
 
             annotated = result.plot()
 
