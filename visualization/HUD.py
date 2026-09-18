@@ -111,6 +111,9 @@ class HUD:
         try:
             surface = pygame.image.load(path).convert_alpha()
             base_size = (50, 50)
+            if risk_level == 2:
+                surface = tint_surface(surface, self.colors["warning"])
+
             self.risk_icons[risk_level] = pygame.transform.smoothscale(surface, base_size)
         except Exception as e:
             print(f"Could not load {risk_level}: {e}")
