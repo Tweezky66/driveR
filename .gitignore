@@ -1,8 +1,13 @@
 venv/
 __pycache__/
+*.pyc
 Datasets/
 *.pt
 *.pyc
 homography.npy
 probe.py
+build/
 *.pyd
+*.so
+*.obj
+risk_engine_src/Eigen/

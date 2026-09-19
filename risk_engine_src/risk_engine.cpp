@@ -38,6 +38,8 @@ RiskResult evaluate_risk(double prev_z, double curr_z, double dt, double caution
 
 }
 
+void init_kalman_filter(py::module_ &m);
+
 PYBIND11_MODULE(risk_engine_cpp, m) {
     m.doc() = "Deterministic TTC/risk evaluation - bounded worst-case execution "
                "time, no GC, no dynamic allocation. Consumes track-to-track "
@@ -46,7 +48,7 @@ PYBIND11_MODULE(risk_engine_cpp, m) {
     py::class_<RiskResult>(m, "RiskResult")
         .def_readonly("closing_speed", &RiskResult::closing_speed)
         .def_readonly("ttc", &RiskResult::ttc)
-        .def_readonly("risk_level", &RiskResult::risk_level);
+        .def_readonly("risk_level", &RiskResult::risk_level); 
  
     m.def("evaluate_risk", &evaluate_risk,
           py::arg("prev_z"), py::arg("curr_z"), py::arg("dt"),
@@ -54,4 +56,5 @@ PYBIND11_MODULE(risk_engine_cpp, m) {
           "Compute closing speed, TTC, and risk level (0=safe, 1=caution, "
           "2=warning) from two ground-plane forward-distance samples of the "
           "SAME tracked object and the time delta between them.");
+    init_kalman_filter(m);
 }

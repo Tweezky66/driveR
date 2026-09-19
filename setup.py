@@ -5,8 +5,9 @@ from setuptools import setup
 ext_modules = [
     Pybind11Extension(
         "risk_engine_cpp",
-        ["risk_engine_src/risk_engine.cpp"],
-        cxx_std= 17
+        ["risk_engine_src/risk_engine.cpp", "risk_engine_src/kalman_filter.cpp"],
+        include_dirs=["risk_engine_src/Eigen", "risk_engine_src"],
+        cxx_std=17,
     ),
 ]
 

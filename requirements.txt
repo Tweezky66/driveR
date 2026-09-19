@@ -7,3 +7,4 @@ pyttsx3
 screeninfo
 deep_sort_realtime
 pybind11
+eigen
