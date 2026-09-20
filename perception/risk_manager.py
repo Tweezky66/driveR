@@ -1,20 +1,22 @@
 import time
 import risk_engine_cpp as _risk
 from collections import deque
+import numpy as np
 
 
 class RiskManager:
 
-    def __init__(self, bev, stale_after=1.0, window_size=6, min_window_dt=0.15, debug=True, warning_distance_m=4, caution_distance_m=8):
+    def __init__(self, bev, stale_after=1.0, window_size=6, min_window_dt=0.15, debug=True, warning_distance_m=4.0, caution_distance_m=8.0):
         self.bev = bev
         self.stale_after = stale_after
-        self.window_size = window_size
         self.min_window_dt = min_window_dt
         self._history = {} # Caching (z_forward, timestamp)
         self.debug = debug
         self._last_debug_print = 0.0
         self.warning_distance_m = warning_distance_m
         self.caution_distance_m = caution_distance_m
+        self._filters = {}
+        self._last_seen = {}
 
 
 
@@ -22,10 +24,10 @@ class RiskManager:
         # Helper function to fallback and confirm risk_level using only distance
         if z_fwd <= 0:
             return 0
-        if z_fwd < self.caution_distance_m:
-            return 1
         if z_fwd < self.warning_distance_m:
             return 2
+        if z_fwd < self.caution_distance_m:
+            return 1
         return 0
 
     def update(self, tracked, timestamp=None):
@@ -40,39 +42,52 @@ class RiskManager:
 
             track_id = det["track_id"]
             seen_ids.add(track_id)
-            window = self._history.setdefault(track_id, deque(maxlen=self.window_size))
+            kf = self._filters.setdefault(track_id, _risk.KalmanFilter())
 
             ttc_risk_level = 0
 
             if z_fwd > 0:
-                oldest = window[0] if window else None
-                if oldest is not None and (now - oldest[1]) >= self.min_window_dt:
-                    prev_z, prev_t = oldest # keep track of frames position and time
+                prev_t = self._last_seen.get(track_id)
+                if prev_t is not None:
                     dt = now - prev_t
-                    result = _risk.evaluate_risk(prev_z=prev_z, curr_z=z_fwd, dt=dt)
+                    if dt > 0:    # guard agains 0 time gaps
+                        kf.predict(dt)
+                        r_x = 1.0
+                        r_z = r_x + 0.05 * det["z_fwd"] ** 2 # make a slight diff between measurement parts 
+                        x_smooth, z_smooth = kf.update(det["x_lateral"], det["z_fwd"], r_x=r_x, r_z=r_z)
+                        closing_speed_est  = -kf.velocity_z()
+                        prev_z_reconstructed = z_smooth + closing_speed_est * dt
+
+                        result = _risk.evaluate_risk(
+                            prev_z=prev_z_reconstructed,
+                            curr_z=z_smooth,
+                            dt=dt
+                        )
 
 
-                    det["closing_speed"] = result.closing_speed
-                    det["ttc"] = result.ttc
-                    ttc_risk_level = result.risk_level
+                        det["closing_speed"] = result.closing_speed
+                        det["ttc"] = result.ttc
+                        ttc_risk_level = result.risk_level
+                    else:
+                        det["closing_speed"] = 0.0
+                        det["ttc"] = -1
                 else:
                     det["closing_speed"] = 0.0
                     det["ttc"] = -1
-                    ttc_risk_level = 0
 
-                window.append((z_fwd, now))
+                self._last_seen[track_id] = now
             else:
                 det["closing_speed"] = 0.0
                 det["ttc"] = -1
-                ttc_risk_level = 0
 
             proximity_risk_level = self._proximity_risk_level(z_fwd)
             det["risk_level"] = max(ttc_risk_level, proximity_risk_level)
 
 
-        stale = [tid for tid, window in self._history.items() if tid not in seen_ids and window and now - window[-1][1] > self.stale_after]
+        stale = [tid for tid, window in self._history.items() if tid not in seen_ids and now - self._last_seen[tid] > self.stale_after]
         for tid in stale:
             del self._history[tid]
+            self._filters.pop(tid, None)
 
         if self.debug and  now - self._last_debug_print > 1.0:
             self._last_debug_print = now
