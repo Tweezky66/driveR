@@ -30,6 +30,41 @@ class RiskManager:
             return 1
         return 0
 
+
+
+    def _compute_ttc(self, det, track_id, now):
+        NO_DATA = (0.0, -1.0, 0)
+
+        z_fwd = det["z_fwd"]
+        if z_fwd <= 0:
+            return NO_DATA
+
+        prev_t = self._last_seen.get(track_id)
+        self._last_seen[track_id] = now  # cache  all
+        if prev_t is None:
+            return NO_DATA # first sight on object
+
+        dt = now = prev_t
+        if dt <= 0:
+            return NO_DATA # dublicate detect, perf decrease case prevention
+
+        kf = self._filters.get(track_id)
+        if kf is None:
+            kf = _risk.KalmanFilter()
+            self._filters[track_id] = kf
+
+        kf.predict(dt)
+        r_x = 1.0
+        r_z = r_x + 0.05 * z_fwd ** 2
+        x_smooth, z_smooth = kf.update(det["x_lateral"], z_fwd, r_x, r_z)
+        closing_speed_est = -kf.velocity_z()
+        prev_z_reconstructed = z_smooth + closing_speed_est * dt
+
+        result = _risk.evaluate_risk(prev_z=prev_z_reconstructed, curr_z=z_smooth, dt=dt)
+        return result.closing_speed, result.ttc, result.risk_level
+
+
+
     def update(self, tracked, timestamp=None):
         now = timestamp if timestamp is not None else time.perf_counter()
 
@@ -42,51 +77,19 @@ class RiskManager:
 
             track_id = det["track_id"]
             seen_ids.add(track_id)
-            kf = self._filters.setdefault(track_id, _risk.KalmanFilter())
 
-            ttc_risk_level = 0
+            closing_speed, ttc, ttc_risk_level = self._compute_ttc(det, track_id, now)
 
-            if z_fwd > 0:
-                prev_t = self._last_seen.get(track_id)
-                if prev_t is not None:
-                    dt = now - prev_t
-                    if dt > 0:    # guard agains 0 time gaps
-                        kf.predict(dt)
-                        r_x = 1.0
-                        r_z = r_x + 0.05 * det["z_fwd"] ** 2 # make a slight diff between measurement parts 
-                        x_smooth, z_smooth = kf.update(det["x_lateral"], det["z_fwd"], r_x=r_x, r_z=r_z)
-                        closing_speed_est  = -kf.velocity_z()
-                        prev_z_reconstructed = z_smooth + closing_speed_est * dt
-
-                        result = _risk.evaluate_risk(
-                            prev_z=prev_z_reconstructed,
-                            curr_z=z_smooth,
-                            dt=dt
-                        )
-
-
-                        det["closing_speed"] = result.closing_speed
-                        det["ttc"] = result.ttc
-                        ttc_risk_level = result.risk_level
-                    else:
-                        det["closing_speed"] = 0.0
-                        det["ttc"] = -1
-                else:
-                    det["closing_speed"] = 0.0
-                    det["ttc"] = -1
-
-                self._last_seen[track_id] = now
-            else:
-                det["closing_speed"] = 0.0
-                det["ttc"] = -1
+            det["closing_speed"] = closing_speed
+            det["ttc"] = ttc
 
             proximity_risk_level = self._proximity_risk_level(z_fwd)
             det["risk_level"] = max(ttc_risk_level, proximity_risk_level)
 
 
-        stale = [tid for tid, window in self._history.items() if tid not in seen_ids and now - self._last_seen[tid] > self.stale_after]
+        stale = [tid for tid in self._last_seen if tid not in seen_ids and now - self._last_seen[tid] > self.stale_after]
         for tid in stale:
-            del self._history[tid]
+            del self._last_seen[tid]
             self._filters.pop(tid, None)
 
         if self.debug and  now - self._last_debug_print > 1.0:
