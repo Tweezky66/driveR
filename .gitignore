@@ -11,3 +11,4 @@ build/
 *.so
 *.obj
 risk_engine_src/Eigen/
+data/
