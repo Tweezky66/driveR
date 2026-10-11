@@ -1,23 +1,22 @@
 import torch
 import matplotlib.pyplot as plt
-from depth.dataset import DepthDataset, list_episodes
-from  depth.model import DepthNet
+from sim.depth.dataset import DepthDataset, list_episodes
+from sim.depth.model import DepthNet
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader, Subset
 from sklearn.model_selection import train_test_split
 
-ROOT = "/data"
-MAX_DEPTH = 80.0
+ROOT = "your root here"
+MAX_DEPTH = 50.0
 BATCH_SIZE = 16
-LR = 1e-3 
-ENCODER_LR = 1e-5 
-FROZEN_EPOCHS = 300
-FINETUNE_EPOCHS = 0 
-CKPT_PATH = "best.pt"
-PRINT_EVERY = 10
-
-
-OVERFIT_N = 8
+LR = 1e-4
+ENCODER_LR = 1e-5
+FROZEN_EPOCHS = 60
+FINETUNE_EPOCHS = 20
+CKPT_PATH = "your path here, if you want to re train model"
+PRINT_EVERY = 5
+WEIGHT_DECAY = 1e-2
+OVERFIT_N = 0
 
 
 def masked_log_l1(pred_log, depth, mask):
@@ -46,6 +45,7 @@ def main():
         train_ds = Subset(full, range(min(OVERFIT_N, len(full))))
         val_ds = train_ds
     else:
+        # split only when training for sure, not experiment with toy dataset overfit, like in if condition above
         train_val_eps, test_eps = train_test_split(episodes, test_size=0.15, random_state=42)
         train_eps, val_eps = train_test_split(train_val_eps, test_size=0.15 / 0.85, random_state=42)
         print("train:", train_eps, "| val:", val_eps, "| test (not used here):", test_eps)
@@ -57,22 +57,26 @@ def main():
 
     model = DepthNet(freeze_encoder=True).to(device)
 
-    decoder_params = [p for n, p in model.named_parameters() if not n.startswith("encoder.")]
-    optimizer = torch.optim.Adam(decoder_params, lr=LR)
+    # decoder only trainss for now
+    encoder_params = [p for n, p in model.named_parameters() if n.startswith("encoder")]
+    decoder_params = [p for  n, p in model.named_parameters() if not n.startswith("encoder")]
+    optimizer = torch.optim.AdamW([
+        {"params": encoder_params, "lr": 0.0},
+        {"params": decoder_params, "lr": LR}
+        ], weight_decay=WEIGHT_DECAY
+        )
 
     best_val = float("inf")
     train_hist, val_hist = [], []
 
-    for epoch in range(FROZEN_EPOCHS + FINETUNE_EPOCHS):
+    for epoch in tqdm(range(FROZEN_EPOCHS + FINETUNE_EPOCHS)):
         phase = "frozen" if epoch < FROZEN_EPOCHS else "finetune"
 
         if epoch == FROZEN_EPOCHS:
+            # unfreeze the encoder, but let it move much slower
             for p in model.encoder.parameters():
                 p.requires_grad = True
-            optimizer = torch.optim.Adam([
-                {"params": model.encoder.parameters(), "lr": ENCODER_LR},
-                {"params": decoder_params, "lr": LR},
-            ])
+            optimizer.param_groups[0]["lr"] = ENCODER_LR
             print("phase 2: encoder unfrozen")
 
         model.train()
@@ -103,6 +107,7 @@ def main():
                 val_absrel += absrel
                 val_mae += mae
 
+        # each loss is already a mean over one batch, so divide by the number of batches
         train_loss /= len(train_loader)
         val_loss /= len(val_loader)
         val_absrel /= len(val_loader)
@@ -116,7 +121,7 @@ def main():
 
         if val_loss < best_val:
             best_val = val_loss
-            torch.save(model.state_dict(), CKPT_PATH)  
+            torch.save(model.state_dict(), CKPT_PATH) # use it only for personal use in case of training model again
 
     plt.plot(train_hist, label="train")
     plt.plot(val_hist, label="val")
