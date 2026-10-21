@@ -2,21 +2,23 @@ import torch
 import matplotlib.pyplot as plt
 from sim.depth.dataset import DepthDataset, list_episodes
 from sim.depth.model import DepthNet
+from visualization.icon_map import PROJECT_ROOT
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader, Subset
 from sklearn.model_selection import train_test_split
 
-ROOT = "your root here"
+ROOT = PROJECT_ROOT / "data"
 MAX_DEPTH = 50.0
 BATCH_SIZE = 16
 LR = 1e-4
 ENCODER_LR = 1e-5
 FROZEN_EPOCHS = 60
 FINETUNE_EPOCHS = 20
-CKPT_PATH = "your path here, if you want to re train model"
+CKPT_PATH = PROJECT_ROOT / "best_depth_aug.pt" # change yourself by need
 PRINT_EVERY = 5
 WEIGHT_DECAY = 1e-2
 OVERFIT_N = 0
+USE_AUGUMENT = True
 
 
 def masked_log_l1(pred_log, depth, mask):
@@ -40,17 +42,12 @@ def main():
 
 
     episodes = list_episodes(ROOT)
-    if OVERFIT_N:
-        full = DepthDataset(ROOT, episodes, max_depth=MAX_DEPTH)
-        train_ds = Subset(full, range(min(OVERFIT_N, len(full))))
-        val_ds = train_ds
-    else:
-        # split only when training for sure, not experiment with toy dataset overfit, like in if condition above
-        train_val_eps, test_eps = train_test_split(episodes, test_size=0.15, random_state=42)
-        train_eps, val_eps = train_test_split(train_val_eps, test_size=0.15 / 0.85, random_state=42)
-        print("train:", train_eps, "| val:", val_eps, "| test (not used here):", test_eps)
-        train_ds = DepthDataset(ROOT, train_eps, max_depth=MAX_DEPTH)
-        val_ds = DepthDataset(ROOT, val_eps, max_depth=MAX_DEPTH)
+    
+    train_val_eps, test_eps = train_test_split(episodes, test_size=0.15, random_state=42)
+    train_eps, val_eps = train_test_split(train_val_eps, test_size=0.15 / 0.85, random_state=42)
+    print("train:", train_eps, "| val:", val_eps, "| test (not used here):", test_eps)
+    train_ds = DepthDataset(ROOT, train_eps, max_depth=MAX_DEPTH, augment=USE_AUGUMENT)
+    val_ds = DepthDataset(ROOT, val_eps, max_depth=MAX_DEPTH, augment=False)
 
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=0) # keep num_workers 2 for  python env < 3.13
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)

@@ -44,7 +44,7 @@ class RiskManager:
         if prev_t is None:
             return NO_DATA # first sight on object
 
-        dt = now = prev_t
+        dt = now - prev_t
         if dt <= 0:
             return NO_DATA # dublicate detect, perf decrease case prevention
 

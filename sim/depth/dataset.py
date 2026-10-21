@@ -14,10 +14,14 @@ IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
 class DepthDataset(Dataset):
-    def __init__(self, root, episodes, max_depth=50.0):
+    def __init__(self, root, episodes, max_depth=50.0, augment=False):
         self.root = Path(root)
         self.max_depth = max_depth
         self.normalize = T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+        self.augment = augment
+        self.color_jitter = T.ColorJitter(
+            brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05
+        )
 
         self.samples = []
         for ep in episodes:
@@ -40,11 +44,19 @@ class DepthDataset(Dataset):
 
         image = Image.open(rgb_path).convert("RGB")
         image = T.functional.to_tensor(image)
-        image = self.normalize(image)
 
         depth = np.load(depth_path).astype(np.float32)
         depth = torch.from_numpy(depth).unsqueeze(0)
 
+        if self.augment:
+            i, j, h, w  = T.RandomCrop.get_params(image, output_size=(320, 608))
+            image = TF.crop(image, i, j, h, w)
+            depth = TF.crop(depth, i, j, h, w)
+
+            if random.random() > 0.5:
+                image =  self.color_jitter(image)
+
+        image =  self.normalize(image)
         mask = depth < self.max_depth
         depth = torch.clamp(depth, max=self.max_depth)
 
@@ -53,34 +65,7 @@ class DepthDataset(Dataset):
 
 def list_episodes(root):
     root = Path(root)
-    return sorted(p.name for p in root.iterdir() if p.is_dir())
-
-
-
-
-class DataAug(torch.utils.data.Dataset):
-    def __init__(self, data_list):
-        super().__init__()
-        self.data_list = data_list
-        self.color_jitter = T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05)
-
-    def __getitem__(self, idx):
-        rgb_path, depth_path = self.data_list[idx]
-
-        rgb = Image.open(rgb_path).convert("RGB")
-        depth = np.load(depth_path)
-
-        rgb = TF.to_tensor(rgb)
-        depth = torch.from_numpy(depth).unsqueeze(0)
-
-        if random.random() > 0.5:
-            rgb = self.color_jitter(rgb)
-
-        i, j, h, w = T.RandomCrop.get_params(rgb, output_size=(320, 600))
-        rgb = TF.crop(rgb, i, j, h, w)
-        depth = TF.crop(depth, i, j, h, w)
-
-        return rgb, depth
-
-    def __len__(self):
-      return len(self.data_list)
+    return sorted(
+    p.name for p in root.iterdir()
+    if p.is_dir() and any((p / "rgb").glob("*.png"))
+)
