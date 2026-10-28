@@ -1,14 +1,29 @@
+# Python environments and caches
 venv/
+.venv/
 __pycache__/
 *.pyc
+
+# Datasets used for training and testing
 Datasets/
-*.pt
-*.pyc
-homography.npy
-probe.py
-build/
+data/
+
+# Model weights and exports
 *.pyd
 *.so
 *.obj
+*.pt
+*.onnx
+
+# C++ dependencies and build outputs
 risk_engine_src/Eigen/
-data/
+build/
+dist/
+*.egg-info/
+
+# dev only files  for now
+homography.npy
+probe.py
+collect_depth.py
+callibration_tool.py
+monocular_depth.py
