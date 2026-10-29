@@ -10,3 +10,8 @@ pybind11
 eigen
 torch
 torchvision
+setuptools
+Pillow
+matplotlib
+tqdm
+scikit-learn
