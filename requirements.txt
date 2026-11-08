@@ -15,3 +15,4 @@ Pillow
 matplotlib
 tqdm
 scikit-learn
+onnxruntime

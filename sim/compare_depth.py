@@ -8,15 +8,16 @@ from torchvision.transforms import Normalize
 from torchvision.transforms.functional import to_tensor
 from tqdm.auto import tqdm
 from ultralytics import YOLO
+from perception.Detector import Detector
 
-from depth.dataset import IMAGENET_MEAN, IMAGENET_STD
-from depth.model import DepthNet
+from sim.depth.dataset import IMAGENET_MEAN, IMAGENET_STD
+from sim.depth.model import DepthNet
 
 
 class DepthEvaluator:
     EPISODES = [
         "Town01_ClearNoon_s101",
-        "Town05_WetCloudyNoon_s105",
+        "Town10HD_Opt_CloudyNoon_s110",
     ]
 
     BANDS = [
@@ -24,6 +25,9 @@ class DepthEvaluator:
         ("4-8 m", 4, 8),
         ("8-10 m", 8, 10),
     ]
+
+    MODELS = ["Custom", "YOLO", "YOLO scaled"]
+    OBJECT_CLASSES = [0, 2, 3, 5, 7]
 
     def __init__(self, project_root):
         self.root = project_root
@@ -43,18 +47,24 @@ class DepthEvaluator:
         self.custom.to(self.device)
         self.custom.eval()
 
-        self.yolo = YOLO("yolo26s-depth.pt")
+        self.yolo = YOLO(str(self.root / "sim" / "yolo26s-depth.pt"))
+        self.detector = Detector(str(self.root / "yolo26s.pt"))
 
-        self.results = {}
-        for model_name in ("Custom", "YOLO"):
-            self.results[model_name] = {}
+
+        self.pixel_results = {}
+        self.object_results = {}
+        for model_name in self.MODELS:
+            self.pixel_results[model_name] = {}
+            self.object_results[model_name] = {}
 
             for band_name, low, high in self.BANDS:
-                self.results[model_name][band_name] = {
-                    "count": 0,
-                    "absolute_error": 0.0,
-                    "over_1m": 0,
-                }
+                self.pixel_results[model_name][band_name] = self.empty_result()
+                self.object_results[model_name][band_name] = self.empty_result()
+
+    def empty_result(self):
+        return {"count": 0, "absolute_error": 0, "relative_error": 0, "over_1m": 0}
+
+
 
     def predict_custom(self, image):
         image_tensor = to_tensor(image)
@@ -77,41 +87,61 @@ class DepthEvaluator:
             verbose=False,
         )[0]
 
-        return result.depth.data.cpu().numpy()
+        return np.squeeze(result.depth.data.cpu().numpy())
+    
 
-    def score(self, model_name, prediction, ground_truth):
-        if prediction.shape != ground_truth.shape:
-            raise ValueError(
-                f"{model_name}: prediction and ground truth sizes differ"
-            )
+    def median_scale(self, prediction, ground_truth):
+        valid = ground_truth < 50
+        scale = np.median(ground_truth[valid] / np.median(prediction[valid]))
+        return prediction * scale
 
+
+    def box_meadian(self, depth, box):
+        x1, y1, x2, y2 = box
+        w = x2 - x1
+        h = y2 - y1
+
+        left = int(x1 + 0.25 * w)
+        right = int(x2 - 0.25 * w)
+        top = int(y1 + 0.3 * h)
+        bottom = int(y2 - 0.1 * h)
+        core = depth[top:bottom, left:right]
+        if core.size < 10:
+            return None
+        return float(np.median(core))
+
+    def add_errors(self, results, predicted, ground_truth):
+        error = predicted - ground_truth
+        results["count"] += error.size
+        results["absolute_error"] += np.abs(error).sum()
+        results["relative_error"] += (np.abs(error) / ground_truth).sum()
+        results["over_1m"] += np.count_nonzero(error > 1.0)
+
+
+    
+    def score_pixels(self,  model_name, predictions, ground_truth):
         for band_name, low, high in self.BANDS:
-            mask = (
-                np.isfinite(ground_truth)
-                & (ground_truth > 0)
-                & (ground_truth >= low)
-                & (ground_truth < high)
-            )
-
+            mask = (ground_truth > 0) & (ground_truth >= low) & (ground_truth < high)
             if not np.any(mask):
                 continue
 
-            predicted_values = prediction[mask]
+            result = self.pixel_results[model_name][band_name]
+            self.add_errors(result, predictions[mask], ground_truth[mask])
 
-            if not np.all(
-                np.isfinite(predicted_values) & (predicted_values > 0)
-            ):
-                raise ValueError(f"{model_name} returned invalid depth")
 
-            error = predicted_values - ground_truth[mask]
-            result = self.results[model_name][band_name]
+    def score_objects(self, model_name, prediction, ground_truth, boxes):
+        for box in boxes:
+            true_distance = self.box_meadian(ground_truth, box)
+            predicted_distance = self.box_meadian(prediction, box)
+            if true_distance is None or predicted_distance is None:
+                continue
 
-            result["count"] += error.size
-            result["absolute_error"] += np.abs(error).sum(
-                dtype=np.float64
-            )
-            result["over_1m"] += np.count_nonzero(error > 1.0)
+            for band_name, low, high in self.BANDS:
+                if low <= true_distance < high:
+                    result  = self.object_results[model_name][band_name]
+                    self.add_errors(result, np.array([predicted_distance]), np.array([true_distance]))
 
+    
     def run(self):
         image_paths = []
 
@@ -129,91 +159,92 @@ class DepthEvaluator:
             depth_folder = episode_folder / "depth"
             depth_path = depth_folder / f"{image_path.stem}.npy"
 
-            ground_truth = np.load(depth_path, allow_pickle=False)
+            ground_truth = np.load(depth_path)
 
             with Image.open(image_path) as image:
                 rgb_image = image.convert("RGB")
 
-            custom_depth = self.predict_custom(rgb_image)
-            yolo_depth = self.predict_yolo(image_path)
 
-            self.score("Custom", custom_depth, ground_truth)
-            self.score("YOLO", yolo_depth, ground_truth)
+            predictions = {}
+            predictions["Custom"] = self.predict_custom(rgb_image)
+            predictions["YOLO"] = self.predict_yolo(image_path)
+            predictions["YOLO scaled"] = self.median_scale(predictions["YOLO"], ground_truth)
+
+            detection_result = self.detector.predict(str(image_path), classes=self.OBJECT_CLASSES)
+            boxes = []
+            for detection in self.detector.extract_detections(detection_result):
+                boxes.append(detection["bbox"])
+
+
+            for model_name in self.MODELS:
+                self.score_pixels(model_name, predictions[model_name], ground_truth)
+                self.score_objects(model_name, predictions[model_name], ground_truth, boxes)
+
 
         print(f"\nCompared {len(image_paths)} images\n")
-        self.show_results()
+        print("PIXEL LEVEL")
+        self.print_table(self.pixel_results)
+        print("OBJECT LEVEL")
+        self.print_table(self.object_results)
         self.plot_results()
 
-    def get_mae(self, model_name, band_name):
-        result = self.results[model_name][band_name]
-        count = result["count"]
-
-        if count == 0:
+    def get_mae(self, result):
+        if result["count"] == 0:
             return float("nan")
+        return result["absolute_error"] / result["count"]
 
-        return result["absolute_error"] / count
-
-    def show_results(self):
-        for model_name in ("Custom", "YOLO"):
+    def print_table(self, results):
+        for model_name in self.MODELS:
             print(model_name)
-
             for band_name, low, high in self.BANDS:
-                result = self.results[model_name][band_name]
+                result = results[model_name][band_name]
                 count = result["count"]
-
                 if count == 0:
-                    print(f"  {band_name}: no pixels")
+                    print(f"  {band_name}: nothing")
                     continue
 
-                mae = self.get_mae(model_name, band_name)
+                mae = self.get_mae(result)
+                abs_rel = result["relative_error"] / count
                 over_rate = 100 * result["over_1m"] / count
-
-                print(
-                    f"  {band_name}: MAE {mae:.2f} m, "
-                    f"overestimated by >1 m: {over_rate:.1f}%"
-                )
-
+                print(f"  {band_name}: MAE {mae:.2f} m, AbsRel {abs_rel:.3f}, "
+                      f"overestimated by >1 m: {over_rate:.1f}%, n={count}")
             print()
 
     def plot_results(self):
         band_names = []
-        custom_mae = []
-        yolo_mae = []
-
         for band_name, low, high in self.BANDS:
             band_names.append(band_name)
-            custom_mae.append(self.get_mae("Custom", band_name))
-            yolo_mae.append(self.get_mae("YOLO", band_name))
 
         positions = np.arange(len(band_names))
-        bar_width = 0.35
+        bar_width = 0.27
 
-        plt.figure(figsize=(8, 4))
-        plt.bar(
-            positions - bar_width / 2,
-            custom_mae,
-            bar_width,
-            label="Custom",
-        )
-        plt.bar(
-            positions + bar_width / 2,
-            yolo_mae,
-            bar_width,
-            label="YOLO depth",
-        )
+        fig, (ax_pixels, ax_objects) = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
 
-        plt.xticks(positions, band_names)
-        plt.ylabel("MAE (metres)")
-        plt.title("Depth error within 10 m — lower is better")
-        plt.legend()
-        plt.grid(axis="y", alpha=0.2)
-        plt.tight_layout()
-        plt.show()
+        for i, model_name in enumerate(self.MODELS):
+            pixel_mae = []
+            object_mae = []
+            for band_name in band_names:
+                pixel_mae.append(self.get_mae(self.pixel_results[model_name][band_name]))
+                object_mae.append(self.get_mae(self.object_results[model_name][band_name]))
+
+            offset = (i - 1) * bar_width
+            ax_pixels.bar(positions + offset, pixel_mae, bar_width, label=model_name)
+            ax_objects.bar(positions + offset, object_mae, bar_width, label=model_name)
+
+        ax_pixels.set_title("Pixel level")
+        ax_objects.set_title("Object level")
+        ax_pixels.set_xticks(positions, band_names)
+        ax_objects.set_xticks(positions, band_names)
+        ax_pixels.set_ylabel("MAE (m)")
+        ax_pixels.legend()
+        fig.suptitle("CARLA episodes (custom, YOLO zero-shot), lower is better")
+        fig.tight_layout()
+        fig.savefig(self.root / "docs" / "eval.png")
+        plt.close(fig)
 
 
 if __name__ == "__main__":
-    script_folder = Path(__file__).resolve().parent
-    project_root = script_folder.parent
+    project_root = Path(__file__).resolve().parent.parent
 
     evaluator = DepthEvaluator(project_root)
     evaluator.run()
