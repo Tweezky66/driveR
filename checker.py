@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import onnxruntime as ort
 import torch
+import risk_engine_cpp  as _risk
 from ultralytics import YOLO
 from tqdm.auto import tqdm
 
@@ -55,6 +56,8 @@ class VideoChecker:
         self.fps = 60
         self.rows = []
         self.times = {"custom": [], "yolo": []}
+        self.filters ={}
+        self.last_time = {}
 
     def check_parity(self):
         model = DepthNet(freeze_encoder=False)
@@ -127,6 +130,27 @@ class VideoChecker:
 
         return float(np.median(core))
 
+
+    def smooth(self, track_id, method, distance, now):
+        key = (track_id, method)
+        if np.isnan(distance):
+            return np.nan, np.nan
+
+        if key not in self.filters:
+            self.filters[key]  = _risk.KalmanFilter()
+            self.last_time[key] = now
+            return distance, np.nan
+
+        dt = now - self.last_time[key]
+        self.last_time[key] = now
+        kf = self.filters[key]
+        kf.predict(dt)
+
+        r_z = 1.0 + 0.05 * distance ** 2  # same noise model as risk_manager
+        x_smooth, z_smooth = kf.update(0.0, distance, 1.0,  r_z)
+        closing = -kf.velocity_z()
+        return z_smooth, closing
+
     def procces_frame(self, frame,  index):
         frame_h, frame_w = frame.shape[:2]
         small = cv2.resize(frame, (self.MODEL_W, self.MODEL_H))
@@ -155,10 +179,10 @@ class VideoChecker:
 
             box = (bx1, by1, bx2, by2)
 
-
+            now = index / self.fps
             row = {
                 "frame": index,
-                "time": index / self.fps,
+                "time": now,
                 "track_id": track["track_id"],
                 "class_id": class_id,
                 "center_x": (x1 + x2) / 2 / frame_w,
@@ -167,6 +191,13 @@ class VideoChecker:
                 "custom": self.box_distance(custom_depth, box),
                 "yolo": self.box_distance(yolo_depth, box),
             }
+
+
+            for method in  self.METHODS:
+                z_smooth, closing = self.smooth(track["track_id"], method, row[method],  now)
+                row[method + "_smooth"] = z_smooth
+                row[method + "_closing"] = closing
+            
             self.rows.append(row)
 
             label = f"P{row['pinhole']:.0f} C{row['custom']:.0f} Y{row['yolo']:.0f}"
@@ -210,9 +241,6 @@ class VideoChecker:
             index += 1
             bar.update(1)
 
-
-            if index % 50 == 0:
-                print("frame", index)
 
         bar.close()
         cap.release()
@@ -287,28 +315,15 @@ class VideoChecker:
             print(f"  {a} vs {b}: x{scale:.2f}, {100 * spread:.1f} %")
 
 
-
-    def ttc(self, times, distances):
-        lag = int(0.5 * self.fps)
-        result = []
-        for i in range(len(times)):
-            if  i < lag:
-                result.append(np.nan)
-                continue
-
-            dt = times[i] - times[i - lag]
-            speed = (distances[i - lag] - distances[i]) / dt
-
-            if speed > 0.1:
-                result.append(distances[i] / speed)
-            else:
-                result.append(np.nan)
-        return result
-
+    
     def plot_lead(self):
         lead = {}
+
+        collision_timing = 6
+        gap = 1
+        
         for row in self.rows:
-            if  row["class_id"] not in self.VEHICLES:
+            if row["class_id"] not in self.VEHICLES:
                 continue
             if row["center_x"] < 0.35 or row["center_x"] > 0.65:
                 continue
@@ -317,22 +332,29 @@ class VideoChecker:
             if frame not in lead or row["bottom"] > lead[frame]["bottom"]:
                 lead[frame] = row
 
-
         frames = sorted(lead.keys())
         times = []
         for frame in frames:
             times.append(lead[frame]["time"])
 
-        fig, (ax_dist, ax_tcc) = plt.subplots(2, 1, sharex=True, figsize=(9, 6))
+        fig, (ax_dist, ax_ttc) = plt.subplots(2, 1, sharex=True, figsize=(9, 6))
         print(f"\nFirst TTC below {self.TTC_WARNING} s")
-        for method in self.METHODS:
-            distances = []
-            for frame in frames:
-                distances.append(lead[frame][method])
 
-            ttc = self.ttc(times, distances)
-            ax_dist.plot(times, distances, label=method)
-            ax_tcc.plot(times, ttc, label=method)
+        for method in self.METHODS:
+            raw, smooth, ttc = [], [], []
+            for frame in frames:
+                lead_row = lead[frame]
+                raw.append(lead_row[method])
+                smooth.append(lead_row[method + "_smooth"])
+                closing = lead_row[method + "_closing"]
+                if closing > 0.1:
+                    ttc.append(lead_row[method + "_smooth"] / closing)
+                else:
+                    ttc.append(np.nan)
+
+            line = ax_dist.plot(times, smooth, label=method)[0]
+            ax_dist.plot(times, raw, color=line.get_color(), alpha=0.3, linewidth=0.8)
+            ax_ttc.plot(times, ttc, color=line.get_color(), label=method)
 
             first = "never"
             for t, value in zip(times, ttc):
@@ -341,13 +363,15 @@ class VideoChecker:
                     break
             print(f"  {method}: {first}")
 
-
-        ax_dist.set_ylabel("lead distance [m]")
+        ax_dist.set_ylabel("lead distance [m] (faded = raw)")
         ax_dist.legend()
-        ax_tcc.axhline(self.TTC_WARNING, color="red", linestyle="--")
-        ax_tcc.set_ylim(0, 10)
-        ax_tcc.set_ylabel("TTC [s]")
-        ax_tcc.set_xlabel("Time [s]")
+        ax_ttc.axhline(self.TTC_WARNING, color="red", linestyle="--")
+        ax_ttc.axvline(collision_timing - gap, color="red",  linestyle="-", label="The collision gap (video) ")
+        ax_ttc.axvline(collision_timing + gap, color="red",  linestyle="-")
+        ax_ttc.set_ylim(0, 10)
+        ax_ttc.set_ylabel("TTC [s] (Kalman)")
+        ax_ttc.set_xlabel("Time [s]")
+        ax_ttc.legend()
         fig.tight_layout()
         fig.savefig(self.out_dir / f"{self.video_path.stem}_lead.png")
         plt.close(fig)
