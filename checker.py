@@ -25,6 +25,8 @@ class VideoChecker:
     MAX_DEPTH = 50.0
     WARMUP = 10
     TTC_WARNING = 2.0
+    LEAD_MAX_MISSING = 10  # frames to wait for a lost lead car before giving up on it
+    LEAD_SWITCH_MARGIN = 0.05 #  new car has to be this much lower/ higher to take over existing one
 
     HEIGHTS = {0: 1.7, 2: 1.5, 3: 1.4, 5: 3.2, 7: 3.0} # approx real word height in COCO classes
     VEHICLES = [2, 3, 5, 7]
@@ -58,6 +60,7 @@ class VideoChecker:
         self.times = {"custom": [], "yolo": []}
         self.filters ={}
         self.last_time = {}
+        self.width_history = {}
 
     def check_parity(self):
         model = DepthNet(freeze_encoder=False)
@@ -131,6 +134,36 @@ class VideoChecker:
         return float(np.median(core))
 
 
+    def looming_ttc(self, track_id, width, now, window_s=0.3):
+        history = self.width_history.setdefault(track_id, [])
+        if history:
+            last_width = history[-1][1]
+            ratio = width / last_width
+            if ratio > 1.3 or ratio < 0.7:
+                # almost imposible to change width in any direction > 30% in one single frame
+                width = last_width
+
+        history.append((now, width))
+
+        if len(history) > 30:
+            history.pop(0) # optimization, pop the oldest
+
+        times, inverse = [], []
+        for t, w in history:
+            if now - t <= window_s and w > 0:
+                times.append(t)
+                inverse.append(1.0 / w)
+        if len(times) < 6:
+            return np.nan
+
+        slope, intercept = np.polyfit(times, inverse, 1) 
+        if slope >= 0:
+            return np.nan
+
+        return (1.0 / width) / (-slope)
+             
+
+
     def smooth(self, track_id, method, distance, now):
         key = (track_id, method)
         if np.isnan(distance):
@@ -168,7 +201,7 @@ class VideoChecker:
         sy = self.MODEL_H / frame_h
 
         for track in tracks:
-            x1, y1, x2, y2 = track["bbox"]
+            x1, y1, x2, y2 = track["raw_bbox"]  
             class_id = int(track["class_id"])
 
             # the same  box but scaling to (640, 352) size
@@ -190,6 +223,8 @@ class VideoChecker:
                 "pinhole": self.pinhole_distance(frame_w, y2 - y1, class_id),
                 "custom": self.box_distance(custom_depth, box),
                 "yolo": self.box_distance(yolo_depth, box),
+                "x1_norm": x1 / frame_w,
+                "x2_norm": x2 / frame_w,
             }
 
 
@@ -197,12 +232,29 @@ class VideoChecker:
                 z_smooth, closing = self.smooth(track["track_id"], method, row[method],  now)
                 row[method + "_smooth"] = z_smooth
                 row[method + "_closing"] = closing
+
+            rx1, ry1, rx2, ry2 = track["raw_bbox"]
+            if track["matched"]:
+                row["looming_ttc"] = self.looming_ttc(track["track_id"], rx2 - rx1, now)
+            else:
+                row["looming_ttc"] = np.nan
             
             self.rows.append(row)
 
             label = f"P{row['pinhole']:.0f} C{row['custom']:.0f} Y{row['yolo']:.0f}"
             cv2.rectangle(small, (int(bx1), int(by1)), (int(bx2), int(by2)), (0, 255, 0), 1)
             cv2.putText(small, label, (int(bx1), int(by1) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+            # need a way to debug, if >= 2 claases voted on rectangle ttc, its becoming red
+            voting = [0] * len(self.METHODS)
+            for i, method in enumerate(self.METHODS):
+                if row[method] <= self.TTC_WARNING:
+                    voting[i] = 1
+                    if sum(voting) >= 2:
+                        cv2.rectangle(small, (int(bx1), int(by1)), (int(bx2), int(by2)), (255, 0, 0), 1) # make rectangle red if ttc
+                        cv2.putText(small, label, (int(bx1), int(by1) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
+            
+
+
 
         return small, custom_depth, yolo_depth
 
@@ -315,22 +367,67 @@ class VideoChecker:
             print(f"  {a} vs {b}: x{scale:.2f}, {100 * spread:.1f} %")
 
 
+    def select_lead(self):
+        by_frame = {}
+        for row in self.rows:
+            if row["class_id"] not in self.VEHICLES:
+                continue # non vehcihe  simpply cannot be lead car
+            if row["x2_norm"] < 0.35 or row["x1_norm"] > 0.65:
+                continue  #box doesn't touch the ego lane at all
+
+            frame = row["frame"]
+            if frame  not in by_frame:
+                by_frame[frame] = []
+            by_frame[frame].append(row)
+
+        lead = {}
+        current_id = None
+        missing = 0
+        last_bottom = 0.0
+
+        for frame in sorted(by_frame.keys()):
+            rows_now = by_frame[frame]
+
+            closest = rows_now[0]
+            current = None
+            for row in rows_now:
+                if row["bottom"] > closest["bottom"]:
+                    closest = row
+                if row["track_id"] == current_id:
+                    current = row
+
+            if current is not None:
+                if closest["bottom"] > current["bottom"] + self.LEAD_SWITCH_MARGIN:
+                    chosen = closest
+                else:
+                    chosen = current
+
+            elif current_id is not None and missing < self.LEAD_MAX_MISSING:
+                if closest["bottom"] > last_bottom - self.LEAD_SWITCH_MARGIN:
+                    chosen = closest
+                else:
+                    missing += 1
+                    continue
+
+            else:
+                chosen = closest # not choise left than to use closest available with no additional conditionals
+
+            lead[frame] = chosen
+            current_id = chosen["track_id"]
+            last_bottom = chosen["bottom"]
+            missing = 0
+
+        return lead
+
+
+
     
     def plot_lead(self):
-        lead = {}
 
         collision_timing = 6
         gap = 1
         
-        for row in self.rows:
-            if row["class_id"] not in self.VEHICLES:
-                continue
-            if row["center_x"] < 0.35 or row["center_x"] > 0.65:
-                continue
-
-            frame = row["frame"]
-            if frame not in lead or row["bottom"] > lead[frame]["bottom"]:
-                lead[frame] = row
+        lead = self.select_lead()
 
         frames = sorted(lead.keys())
         times = []
@@ -362,6 +459,18 @@ class VideoChecker:
                     first = f"{t:.2f} s"
                     break
             print(f"  {method}: {first}")
+
+        looming = []
+        for frame in frames:
+            looming.append(lead[frame]["looming_ttc"])
+        ax_ttc.plot(times, looming, color="black", linewidth=2, label="looming (box growth)")
+
+        first = "never"
+        for t, value in zip(times, looming):
+            if value < self.TTC_WARNING:
+                first = f"{t:.2f} s"
+                break
+        print(f" looming: {first}")
 
         ax_dist.set_ylabel("lead distance [m] (faded = raw)")
         ax_dist.legend()
