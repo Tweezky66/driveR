@@ -16,10 +16,48 @@ def compute_hist_embedding(crop,  bins=(8, 8, 8)):
 
 class Tracker:
 
-    def __init__(self, max_age=30, alpha=0.3, max_cosine_distance=0.2):
-        self.tracker = DeepSort(max_age=max_age, embedder=None, max_cosine_distance=max_cosine_distance)
+    def __init__(self, max_age=30, alpha=0.3, max_cosine_distance=0.35, dublicate_iou=0.6, max_iou_distance=0.9):
+        self.tracker = DeepSort(max_age=max_age, n_init=2, embedder=None, max_cosine_distance=max_cosine_distance, max_iou_distance=max_iou_distance)
         self.alpha = alpha
+        self.dublicate_iou = dublicate_iou
+        self.class_votes = {} # track_id -> {class_id: count}
         self.smoothed_boxes = {}
+
+
+
+    def iou(self, box_a, box_b):
+        # boxes are (x1, y1, x2, y2)
+        inter_x1 = max(box_a[0], box_b[0])
+        inter_y1 = max(box_a[1], box_b[1])
+        inter_x2 = min(box_a[2], box_b[2])
+        inter_y2 = min(box_a[3], box_b[3])
+
+        inter_w = max(0.0, inter_x2 - inter_x1)
+        inter_h = max(0.0, inter_y2 - inter_y1)
+        intersection = inter_w * inter_h
+
+
+        area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+        area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+        union = area_a + area_b - intersection
+
+        if union <= 0.0:
+            return 0.0
+        return intersection / union
+
+
+    def vote_class(self, track_id, class_id):
+        if track_id not in self.class_votes:
+            self.class_votes[track_id] = {}
+        votes = self.class_votes[track_id]
+
+        if class_id is not None:
+            votes[class_id] = 1 + votes.get(class_id, 0)
+
+        if not votes:
+            return class_id
+        return max(votes, key=votes.get) # msot freaquent class first
+
 
 
 
@@ -43,40 +81,67 @@ class Tracker:
 
         tracks = self.tracker.update_tracks(raw, embeds=embeds)
 
-        tracked = []
-        current_id = set()
+        
 
-
+        live = []
         for t in tracks:
             if not t.is_confirmed():
                 continue # if confidence is too low
+            if t.time_since_update > 3:
+                continue # coasting: bbox is Kalman pred only
+            live.append(t)
+
+        # keep the long  living one
+        live.sort(key=lambda t: (t.time_since_update, -t.age)) # add a tuple, make sure if time is equal, age is not
+
+        tracked = []
+        kept_boxes = []
+
+        for t in live:
+            raw_box = t.to_ltrb(orig=True) # detection match, not the calman filter match
+
+            raw_box = list(raw_box)
+
+            is_dublicate = False
+            for kept in kept_boxes:
+                if self.iou(raw_box, kept) > self.dublicate_iou:
+                    is_dublicate = True
+                    break
+            if is_dublicate:
+                continue
+            kept_boxes.append(raw_box)
 
             track_id = t.track_id
-            current_id.add(track_id)
-
-            raw_box = t.to_ltrb()
 
             if track_id in self.smoothed_boxes:
-                old_bbox = self.smoothed_boxes[track_id]
+                old = self.smoothed_boxes[track_id]
+                smooth_box = []
 
-                smooth_bbox = [
-                    (self.alpha * raw_box[i]) + ((1.0 - self.alpha) * old_bbox[i])
-                    for i in range(4)
-                ]
+                for i in range(4):
+                    smooth_box.append(self.alpha * raw_box[i] + (1.0 - self.alpha) * old[i])
             else:
-                smooth_bbox = list(raw_box)
+                smooth_box = raw_box
 
-            self.smoothed_boxes[track_id] = smooth_bbox
+            self.smoothed_boxes[track_id] = smooth_box
 
             tracked.append({
-                "bbox": smooth_bbox,
-                "raw_bbox": list(raw_box),
-                "class_id": t.get_det_class(),
+                "bbox": smooth_box,
+                "raw_bbox": raw_box,
+                "matched": t.time_since_update == 0,
+                "class_id": self.vote_class(track_id, t.get_det_class()),
                 "track_id": t.track_id,
             })
 
-        self.smoothed_boxes = {
-            tid: bbox for tid , bbox in self.smoothed_boxes.items() if tid in current_id
-        }
+        # forget only tracks which DeepSORT itself has deleted (coasting ones keep their own history)
+        alive_ids = set()
+        for t in tracks:
+            alive_ids.add(t.track_id)
+
+        for track_id in list(self.smoothed_boxes.keys()):
+            if track_id not in alive_ids:
+                del self.smoothed_boxes[track_id]
+        for track_id in list(self.class_votes.keys()):
+            if track_id not in alive_ids:
+                del self.class_votes[track_id]
 
         return tracked
