@@ -27,6 +27,9 @@ class VideoChecker:
     TTC_WARNING = 2.0
     LEAD_MAX_MISSING = 10  # frames to wait for a lost lead car before giving up on it
     LEAD_SWITCH_MARGIN = 0.05 #  new car has to be this much lower/ higher to take over existing one
+    LEAD_LOOM_MAX_MISSING = 5
+    LEAD_TIME_WINDOW = 0.5
+    CLOSE_CAR_THRESHOLD = 0.8
 
     HEIGHTS = {0: 1.7, 2: 1.5, 3: 1.4, 5: 3.2, 7: 3.0} # approx real word height in COCO classes
     VEHICLES = [2, 3, 5, 7]
@@ -61,6 +64,14 @@ class VideoChecker:
         self.filters ={}
         self.last_time = {}
         self.width_history = {}
+
+
+        # lead car part, for fixing ttc warnings and ploting the graph
+        self.lead_rejects = 0
+        self.lead_missing = 0
+        self.lead_series = []
+        self.lead_history = []
+
 
     def check_parity(self):
         model = DepthNet(freeze_encoder=False)
@@ -161,6 +172,83 @@ class VideoChecker:
             return np.nan
 
         return (1.0 / width) / (-slope)
+
+
+    def _lead_looming(self, tracks, frame_w, frame_h, now):
+        lead = None
+
+        for track in tracks:
+            if not track["matched"]:
+                continue
+            
+            if track["class_id"] not in self.VEHICLES:
+                continue
+            
+            x1, y1, x2, y2 = track["raw_bbox"]
+            
+            if x2 / frame_w < 0.35 or x1 / frame_w > 0.65:
+                continue
+
+            if y2 / frame_h < self.CLOSE_CAR_THRESHOLD:
+                continue # car is far away
+
+    
+            if lead is None or y2 > lead["raw_bbox"][3]:
+                lead = track
+
+
+        if lead is None:
+            self.lead_missing += 1
+            if self.lead_missing > self.LEAD_LOOM_MAX_MISSING:
+                self.lead_history = []
+            return np.nan, None
+        self.lead_missing = 0
+
+
+        x1, y1, x2, y2 = lead["raw_bbox"]
+        width = (x2 - x1) / frame_w
+
+
+        if self.lead_history:
+            ratio = width / self.lead_history[-1][1]
+            if ratio > 1.3 or ratio < 0.7:
+                self.lead_rejects += 1
+                if self.lead_rejects < 3:
+                    width = self.lead_history[-1][1]
+                else:
+                    self.lead_history = []
+                    self.lead_rejects = 0
+            else:
+                self.lead_rejects = 0
+
+
+        self.lead_history.append((now, width))
+
+        recent = []
+
+        for t, w in self.lead_history:
+            if now - t <= self.LEAD_TIME_WINDOW:
+                recent.append((t, w))
+
+        self.lead_history = recent
+
+        if len(recent) < 6:
+            return np.nan, lead["track_id"]
+
+        
+        times = []
+        inverse = []
+
+        for t, w in recent:
+            times.append(t)
+            inverse.append(1.0 / w)
+        slope, intercept = np.polyfit(times, inverse, 1)
+        if slope >= 0:
+            return np.nan, lead["track_id"]
+        return (1.0 / width) / -(slope),  lead["track_id"]
+
+        
+
              
 
 
@@ -197,6 +285,11 @@ class VideoChecker:
         tracks = self.tracker.update(detections, frame)
 
 
+        now = index / self.fps
+        lead_ttc, lead_id = self._lead_looming(tracks, frame_w, frame_h, now)
+        self.lead_series.append((now, lead_ttc))
+
+
         sx = self.MODEL_W / frame_w
         sy = self.MODEL_H / frame_h
 
@@ -212,7 +305,6 @@ class VideoChecker:
 
             box = (bx1, by1, bx2, by2)
 
-            now = index / self.fps
             row = {
                 "frame": index,
                 "time": now,
@@ -241,20 +333,17 @@ class VideoChecker:
             
             self.rows.append(row)
 
+
+            color = (0, 255, 0)
             label = f"P{row['pinhole']:.0f} C{row['custom']:.0f} Y{row['yolo']:.0f}"
-            cv2.rectangle(small, (int(bx1), int(by1)), (int(bx2), int(by2)), (0, 255, 0), 1)
-            cv2.putText(small, label, (int(bx1), int(by1) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-            # need a way to debug, if >= 2 claases voted on rectangle ttc, its becoming red
-            voting = [0] * len(self.METHODS)
-            for i, method in enumerate(self.METHODS):
-                if row[method] <= self.TTC_WARNING:
-                    voting[i] = 1
-                    if sum(voting) >= 2:
-                        cv2.rectangle(small, (int(bx1), int(by1)), (int(bx2), int(by2)), (255, 0, 0), 1) # make rectangle red if ttc
-                        cv2.putText(small, label, (int(bx1), int(by1) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
-            
+            if track["track_id"] == lead_id:
+                label = label + f" T{lead_ttc:.1f}"
+                if lead_ttc < self.TTC_WARNING:
+                    color = (0, 0, 255)
 
 
+            cv2.rectangle(small, (int(bx1), int(by1)), (int(bx2), int(by2)), color, 1)
+            cv2.putText(small, label, (int(bx1), int(by1) - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
         return small, custom_depth, yolo_depth
 
@@ -298,18 +387,26 @@ class VideoChecker:
         cap.release()
         writer.release()
 
-        self.save_csv()
+        self.save_csv(f"{self.video_path.stem}_rows", self.rows)
+
+        lead_rows = []
+        for t, ttc in self.lead_series:
+            lead_rows.append({"time": t, "lead_ttc": ttc})
+        self.save_csv(f"{self.video_path.stem}_lead_ttc", lead_rows)
+
         self.report()
         self.plot_lead()
 
 
 
-    def save_csv(self):
-        path = self.out_dir / f"{self.video_path.stem}_rows.csv"
+    def save_csv(self, name, rows):
+        if not rows:
+            return 
+        path = self.out_dir / f"{name}.csv"
         with open(path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=list(self.rows[0].keys()))
+            writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
             writer.writeheader()
-            writer.writerows(self.rows)
+            writer.writerows(rows)
 
 
 
@@ -424,8 +521,10 @@ class VideoChecker:
     
     def plot_lead(self):
 
-        collision_timing = 6
         gap = 1
+
+        danger_time = 6.3
+        reaction_time = 1.5 
         
         lead = self.select_lead()
 
@@ -436,6 +535,10 @@ class VideoChecker:
 
         fig, (ax_dist, ax_ttc) = plt.subplots(2, 1, sharex=True, figsize=(9, 6))
         print(f"\nFirst TTC below {self.TTC_WARNING} s")
+
+
+        colors = {"pinhole": "aqua", "custom": "navy", "yolo": "lime"}
+
 
         for method in self.METHODS:
             raw, smooth, ttc = [], [], []
@@ -449,9 +552,10 @@ class VideoChecker:
                 else:
                     ttc.append(np.nan)
 
-            line = ax_dist.plot(times, smooth, label=method)[0]
-            ax_dist.plot(times, raw, color=line.get_color(), alpha=0.3, linewidth=0.8)
-            ax_ttc.plot(times, ttc, color=line.get_color(), label=method)
+
+            ax_dist.plot(times, smooth, color=colors[method], label=method) # Kalman
+            ax_dist.plot(times, raw, color=colors[method], alpha=0.3, linewidth=0.8) # normal, without filtering
+            ax_ttc.plot(times, ttc, color=colors[method], label=method) # ttc
 
             first = "never"
             for t, value in zip(times, ttc):
@@ -460,13 +564,16 @@ class VideoChecker:
                     break
             print(f"  {method}: {first}")
 
-        looming = []
-        for frame in frames:
-            looming.append(lead[frame]["looming_ttc"])
-        ax_ttc.plot(times, looming, color="black", linewidth=2, label="looming (box growth)")
+        lead_times = []
+        lead_ttcs = []
+        for t, value in self.lead_series:
+            lead_times.append(t)
+            lead_ttcs.append(value)
+        ax_ttc.plot(lead_times, lead_ttcs, color="black", linewidth=2, label="looming (lane lead)")
+        
 
         first = "never"
-        for t, value in zip(times, looming):
+        for t, value in zip(lead_times, lead_ttcs):
             if value < self.TTC_WARNING:
                 first = f"{t:.2f} s"
                 break
@@ -475,8 +582,9 @@ class VideoChecker:
         ax_dist.set_ylabel("lead distance [m] (faded = raw)")
         ax_dist.legend()
         ax_ttc.axhline(self.TTC_WARNING, color="red", linestyle="--")
-        ax_ttc.axvline(collision_timing - gap, color="red",  linestyle="-", label="The collision gap (video) ")
-        ax_ttc.axvline(collision_timing + gap, color="red",  linestyle="-")
+        ax_ttc.axvline(danger_time - reaction_time, color="orange", linestyle="-", label="latest useful warning") # ttc should warn BEFORE the accident, human reaction time should be included
+        ax_ttc.axvline(danger_time - gap, color="red",  linestyle="-", label="The collision gap (video) ") # the accident itself
+        ax_ttc.axvline(danger_time + gap, color="red",  linestyle="-")
         ax_ttc.set_ylim(0, 10)
         ax_ttc.set_ylabel("TTC [s] (Kalman)")
         ax_ttc.set_xlabel("Time [s]")
